@@ -1,10 +1,11 @@
-import React, {useEffect, useMemo, useState} from "react";
+import React, {useEffect, useMemo, useRef, useState} from "react";
 import type {LatLon, Station} from "./types";
 import {geocodeNominatim} from "./lib/geocode";
 import {loadStations} from "./lib/gbfs";
-import {haversineKm, kmToMiles, fmtMilesFeet} from "./lib/distance";
+import {haversineKm, kmToMiles} from "./lib/distance";
 import {buildGMapsMulti} from "./lib/maps";
 import {computeBounds, expandBounds, contains} from "./lib/bounds";
+import ResultCard from "./components/ResultCard";
 
 export default function App() {
     const [origin, setOrigin] = useState<LatLon | null>(null);
@@ -20,6 +21,7 @@ export default function App() {
     }>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const requestSeq = useRef(0);
 
     const isMobile = useMemo(
         () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
@@ -44,11 +46,13 @@ export default function App() {
         setResult(null);
 
         if (!origin) return setError("Allow location access first.");
-        if (!destText.trim()) return setError("Enter a destination (address or lat,lon).");
+        const trimmedDest = destText.trim();
+        if (!trimmedDest) return setError("Enter a destination (address or lat,lon).");
 
+        const requestId = ++requestSeq.current;
         setLoading(true);
         try {
-            const ge = await geocodeNominatim(destText.trim());
+            const ge = await geocodeNominatim(trimmedDest);
 
             const stations = await loadStations();
             const rawBounds = computeBounds(stations);
@@ -58,15 +62,18 @@ export default function App() {
             const bounds = expandBounds(rawBounds, 1);
 
             if (!contains(bounds, ge.lat, ge.lon)) {
-                const msg =
-                    "Destination appears outside the Madison BCycle service area. " +
-                    "Please enter a destination within the bounds.";
+                const msg = "Destination not found.";
                 throw new Error(msg);
             }
 
             const pickup = pickNearestWith(stations, origin, (s) => s.num_bikes_available > 0);
             if (!pickup) throw new Error("No nearby stations with bikes available.");
-            const dropoff = pickNearestWith(stations, ge, (s) => s.num_docks_available > 0);
+            const dropoff = pickNearestWith(
+                stations,
+                ge,
+                (s) => s.num_docks_available > 0,
+                {requireRenting: false}
+            );
             if (!dropoff) throw new Error("No stations with open docks near your destination.");
 
             const dWalk1Mi = kmToMiles(haversineKm(origin, {lat: pickup.lat, lon: pickup.lon}));
@@ -83,11 +90,16 @@ export default function App() {
                 ge
             );
 
+            if (requestSeq.current !== requestId) return;
             setResult({pickup, dropoff, link, dWalk1Mi, dBikeMi, dWalk2Mi});
         } catch (err: any) {
-            setError(err?.message || "Something went wrong.");
+            if (requestSeq.current === requestId) {
+                setError(err?.message || "Something went wrong.");
+            }
         } finally {
-            setLoading(false);
+            if (requestSeq.current === requestId) {
+                setLoading(false);
+            }
         }
     }
 
@@ -144,21 +156,14 @@ export default function App() {
 
                     {result && (
                         <>
-                            <div className="result-card block-gap">
-                                <strong>Pickup:</strong> {result.pickup.name} —
-                                bikes: {result.pickup.num_bikes_available}
-                                <div className="small">
-                                    {result.pickup.lat.toFixed(5)}, {result.pickup.lon.toFixed(5)} (walk {fmtMilesFeet(result.dWalk1Mi)})
-                                </div>
-                                <div style={{height: 8}}/>
-                                <strong>Dropoff:</strong> {result.dropoff.name} —
-                                docks: {result.dropoff.num_docks_available}
-                                <div className="small">
-                                    {result.dropoff.lat.toFixed(5)}, {result.dropoff.lon.toFixed(5)} (walk {fmtMilesFeet(result.dWalk2Mi)})
-                                </div>
-                                <div style={{height: 8}}/>
-                                <div className="small">Bike segment ~{result.dBikeMi.toFixed(2)} mi</div>
-                            </div>
+                            <ResultCard
+                                className="block-gap"
+                                pickup={result.pickup}
+                                dropoff={result.dropoff}
+                                dWalk1Mi={result.dWalk1Mi}
+                                dBikeMi={result.dBikeMi}
+                                dWalk2Mi={result.dWalk2Mi}
+                            />
 
                             <a
                                 href={result.link}
@@ -176,14 +181,21 @@ export default function App() {
     );
 }
 
-/** helper */
 function pickNearestWith(
     stations: Station[],
     origin: LatLon,
-    predicate: (s: Station) => boolean
+    predicate: (s: Station) => boolean,
+    options?: { requireRenting?: boolean; requireReturning?: boolean }
 ): Station | null {
+    const {requireRenting = true, requireReturning = true} = options ?? {};
     return stations
-        .filter((s) => s.is_installed && s.is_renting && s.is_returning && predicate(s))
+        .filter(
+            (s) =>
+                s.is_installed &&
+                (!requireRenting || s.is_renting) &&
+                (!requireReturning || s.is_returning) &&
+                predicate(s)
+        )
         .map((s) => ({s, d: haversineKm(origin, {lat: s.lat, lon: s.lon})}))
         .sort((a, b) => a.d - b.d)[0]?.s ?? null;
 }
