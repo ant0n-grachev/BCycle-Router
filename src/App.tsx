@@ -100,13 +100,20 @@ export default function App() {
             }
             const bounds = expandBounds(rawBounds, 1);
 
+            if (!contains(bounds, originForTrip.lat, originForTrip.lon)) {
+                const message =
+                    manualOriginInput !== null
+                        ? "Starting location not found."
+                        : "Current location outside of the service area.";
+                throw new Error(message);
+            }
+
             if (!contains(bounds, ge.lat, ge.lon)) {
                 const msg = "Destination not found.";
                 throw new Error(msg);
             }
 
             const pickup = pickNearestWith(stations, originForTrip, (s) => s.num_bikes_available > 0);
-            if (!pickup) throw new Error("No nearby stations with bikes available.");
             if (!pickup) throw new Error("No nearby stations with bikes available.");
 
             const dropoff = pickNearestWith(
@@ -213,7 +220,7 @@ export default function App() {
                                         <input
                                             className="input origin-input"
                                             inputMode="search"
-                                            placeholder="e.g., 2 E Main St, Madison or 43.0747,-89.3842"
+                                            placeholder="address or lat,lon"
                                             value={originText}
                                             onChange={(e) => setOriginText(e.target.value)}
                                             aria-label="Starting location"
@@ -230,7 +237,7 @@ export default function App() {
                             <input
                                 className="input"
                                 inputMode="search"
-                                placeholder="e.g., 2 E Main St, Madison or 43.0747,-89.3842"
+                                placeholder="address or lat,lon"
                                 value={destText}
                                 onChange={(e) => setDestText(e.target.value)}
                                 aria-label="Destination"
