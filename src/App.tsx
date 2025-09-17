@@ -8,8 +8,10 @@ import {computeBounds, expandBounds, contains} from "./lib/bounds";
 import ResultCard from "./components/ResultCard";
 
 export default function App() {
-    const [origin, setOrigin] = useState<LatLon | null>(null);
+    const [deviceOrigin, setDeviceOrigin] = useState<LatLon | null>(null);
     const [originErr, setOriginErr] = useState<string | null>(null);
+    const [originMode, setOriginMode] = useState<"device" | "manual">("device");
+    const [originText, setOriginText] = useState("");
     const [destText, setDestText] = useState("");
     const [result, setResult] = useState<null | {
         pickup: Station;
@@ -31,11 +33,18 @@ export default function App() {
     useEffect(() => {
         if (!navigator.geolocation) {
             setOriginErr("Geolocation not supported by your browser.");
+            setOriginMode("manual");
             return;
         }
         navigator.geolocation.getCurrentPosition(
-            (pos) => setOrigin({lat: pos.coords.latitude, lon: pos.coords.longitude}),
-            (err) => setOriginErr(err.message || "Location error"),
+            (pos) => {
+                setDeviceOrigin({lat: pos.coords.latitude, lon: pos.coords.longitude});
+                setOriginErr(null);
+            },
+            (err) => {
+                setOriginErr(err.message || "Location error");
+                setOriginMode((mode) => (mode === "device" ? "manual" : mode));
+            },
             {enableHighAccuracy: true, timeout: 15000, maximumAge: 0}
         );
     }, []);
@@ -45,13 +54,43 @@ export default function App() {
         setError(null);
         setResult(null);
 
-        if (!origin) return setError("Allow location access first.");
+        let manualOriginInput: string | null = null;
+        if (originMode === "manual") {
+            manualOriginInput = originText.trim();
+            if (!manualOriginInput) {
+                setError("Enter a starting location.");
+                return;
+            }
+        } else if (!deviceOrigin) {
+            setError("Allow location access first or enter a starting location manually.");
+            return;
+        }
+
         const trimmedDest = destText.trim();
-        if (!trimmedDest) return setError("Enter a destination (address or lat,lon).");
+        if (!trimmedDest) {
+            setError("Enter a destination.");
+            return;
+        }
 
         const requestId = ++requestSeq.current;
         setLoading(true);
         try {
+            let originForTrip: LatLon;
+            if (manualOriginInput !== null) {
+                try {
+                    const manualResolved = await geocodeNominatim(manualOriginInput);
+                    originForTrip = {lat: manualResolved.lat, lon: manualResolved.lon};
+                } catch (err: any) {
+                    const msg = err?.message;
+                    if (typeof msg === "string" && msg === "Destination not found.") {
+                        throw new Error("Starting location not found.");
+                    }
+                    throw err;
+                }
+            } else {
+                originForTrip = deviceOrigin!;
+            }
+
             const ge = await geocodeNominatim(trimmedDest);
 
             const stations = await loadStations();
@@ -66,8 +105,10 @@ export default function App() {
                 throw new Error(msg);
             }
 
-            const pickup = pickNearestWith(stations, origin, (s) => s.num_bikes_available > 0);
+            const pickup = pickNearestWith(stations, originForTrip, (s) => s.num_bikes_available > 0);
             if (!pickup) throw new Error("No nearby stations with bikes available.");
+            if (!pickup) throw new Error("No nearby stations with bikes available.");
+
             const dropoff = pickNearestWith(
                 stations,
                 ge,
@@ -76,7 +117,7 @@ export default function App() {
             );
             if (!dropoff) throw new Error("No stations with open docks near your destination.");
 
-            const dWalk1Mi = kmToMiles(haversineKm(origin, {lat: pickup.lat, lon: pickup.lon}));
+            const dWalk1Mi = kmToMiles(haversineKm(originForTrip, {lat: pickup.lat, lon: pickup.lon}));
             const dBikeMi = kmToMiles(haversineKm({lat: pickup.lat, lon: pickup.lon}, {
                 lat: dropoff.lat,
                 lon: dropoff.lon
@@ -84,7 +125,7 @@ export default function App() {
             const dWalk2Mi = kmToMiles(haversineKm({lat: dropoff.lat, lon: dropoff.lon}, ge));
 
             const link = buildGMapsMulti(
-                origin,
+                originForTrip,
                 {lat: pickup.lat, lon: pickup.lon},
                 {lat: dropoff.lat, lon: dropoff.lon},
                 ge
@@ -123,20 +164,68 @@ export default function App() {
 
                 <form onSubmit={handlePlan}>
                     <div className="group">
-                        <div className="label">Your current location</div>
+                        <div className="label">Starting location</div>
                         <div className="info">
-                            {origin ? (
-                                <span>{origin.lat.toFixed(5)}, {origin.lon.toFixed(5)}</span>
-                            ) : originErr ? (
-                                <span style={{color: "#dc2626"}}>{originErr}</span>
-                            ) : (
-                                <span>Requesting precise location… allow your browser to share it.</span>
-                            )}
+                            <div className="origin-options">
+                                <label className="origin-option">
+                                    <input
+                                        type="radio"
+                                        name="origin-mode"
+                                        value="device"
+                                        checked={originMode === "device"}
+                                        onChange={() => setOriginMode("device")}
+                                    />
+                                    <span className="origin-option__body">
+                                        <span className="origin-option__title">Use my current location</span>
+                                        <span
+                                            className={`origin-option__status${
+                                                originErr && originMode === "device"
+                                                    ? " origin-option__status--error"
+                                                    : ""
+                                            }`}
+                                        >
+                                            {deviceOrigin ? (
+                                                `${deviceOrigin.lat.toFixed(5)}, ${deviceOrigin.lon.toFixed(5)}`
+                                            ) : originErr ? (
+                                                originErr
+                                            ) : (
+                                                "Requesting precise location… allow your browser to share it."
+                                            )}
+                                        </span>
+                                    </span>
+                                </label>
+
+                                <label className="origin-option">
+                                    <input
+                                        type="radio"
+                                        name="origin-mode"
+                                        value="manual"
+                                        checked={originMode === "manual"}
+                                        onChange={() => setOriginMode("manual")}
+                                    />
+                                    <span className="origin-option__body">
+                                        <span className="origin-option__title">Enter a location manually</span>
+                                    </span>
+                                </label>
+
+                                {originMode === "manual" && (
+                                    <div className="origin-input-wrapper">
+                                        <input
+                                            className="input origin-input"
+                                            inputMode="search"
+                                            placeholder="e.g., 2 E Main St, Madison or 43.0747,-89.3842"
+                                            value={originText}
+                                            onChange={(e) => setOriginText(e.target.value)}
+                                            aria-label="Starting location"
+                                        />
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
 
                     <div className="group">
-                        <div className="label">Destination (address or lat,lon)</div>
+                        <div className="label">Destination</div>
                         <div className="row">
                             <input
                                 className="input"
