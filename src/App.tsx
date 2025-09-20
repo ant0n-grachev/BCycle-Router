@@ -324,17 +324,20 @@ export default function App() {
 
     return (
         <div className="wrap">
-            <div className="card">
-                <div className="title">
-                    <span className="title-line">
+            <main className="card">
+                <header className="title">
+                    <h1 className="title-line">
                         <span className="title-main">🚲 Madison BCycle Router</span>
-                        {"\u00A0"}
-                        <a className="title-by" href="https://anton.grachev.us" target="_blank"
-                           rel="noopener noreferrer">
+                        <a
+                            className="title-by"
+                            href="https://anton.grachev.us"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
                             by Anton
                         </a>
-                    </span>
-                </div>
+                    </h1>
+                </header>
 
 
                 <p className="subtitle">Find a bike nearby, ride to a dock near your destination, and get guided the
@@ -513,7 +516,7 @@ export default function App() {
                         </>
                     )}
                 </form>
-            </div>
+            </main>
         </div>
     );
 }

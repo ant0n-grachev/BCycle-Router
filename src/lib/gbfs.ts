@@ -2,6 +2,11 @@ import {Station} from "../types";
 
 const GBFS_INFO = "https://gbfs.bcycle.com/bcycle_madison/station_information.json";
 const GBFS_STATUS = "https://gbfs.bcycle.com/bcycle_madison/station_status.json";
+const CACHE_TTL_MS = 15_000;
+
+let cachedStations: Station[] | null = null;
+let cacheTimestamp = 0;
+let pending: Promise<Station[]> | null = null;
 
 async function fetchJson(url: string, label: string) {
     const res = await fetch(url);
@@ -11,7 +16,7 @@ async function fetchJson(url: string, label: string) {
     return res.json();
 }
 
-export async function loadStations(): Promise<Station[]> {
+async function fetchStations(): Promise<Station[]> {
     const [infoRes, statusRes] = await Promise.all([
         fetchJson(GBFS_INFO, "station information"),
         fetchJson(GBFS_STATUS, "station status"),
@@ -43,4 +48,35 @@ export async function loadStations(): Promise<Station[]> {
         });
     }
     return stations;
+}
+
+export interface LoadStationsOptions {
+    forceRefresh?: boolean;
+}
+
+export function loadStations({forceRefresh = false}: LoadStationsOptions = {}): Promise<Station[]> {
+    const now = Date.now();
+    if (!forceRefresh && cachedStations && now - cacheTimestamp < CACHE_TTL_MS) {
+        return Promise.resolve(cachedStations);
+    }
+
+    if (!forceRefresh && pending) {
+        return pending;
+    }
+
+    const request = fetchStations()
+        .then((stations) => {
+            cachedStations = stations;
+            cacheTimestamp = Date.now();
+            return stations;
+        })
+        .finally(() => {
+            if (pending === request) {
+                pending = null;
+            }
+        });
+
+    pending = request;
+
+    return request;
 }
