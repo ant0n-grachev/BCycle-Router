@@ -171,11 +171,6 @@ export default function App() {
         destResolvedSuggestion && destResolvedSuggestion.label === trimmedDest
     );
 
-    const originNeedsSuggestionNotice =
-        originMode === "manual" && trimmedOrigin.length > 0 && !originSuggestionSelected;
-    const destNeedsSuggestionNotice =
-        trimmedDest.length > 0 && !destSuggestionSelected;
-
     const canPlan =
         destSuggestionSelected &&
         (originMode === "manual" ? originSuggestionSelected : true);
