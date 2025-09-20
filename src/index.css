@@ -31,6 +31,13 @@ body,
     min-height: 100%;
 }
 
+@supports (min-height: 100dvh) {
+    body,
+    #root {
+        min-height: 100dvh;
+    }
+}
+
 body {
     margin: 0;
     font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -42,11 +49,25 @@ body {
 }
 
 .wrap {
-    min-height: 100vh;
-    padding: calc(var(--space) * 2) var(--space);
+    --wrap-padding-block: calc(var(--space) * 2);
+    min-height: max(0px, calc(100vh - 2 * var(--wrap-padding-block)));
+    padding: var(--wrap-padding-block) var(--space);
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+@supports (min-height: 100dvh) {
+    .wrap {
+        min-height: max(0px, calc(100dvh - 2 * var(--wrap-padding-block)));
+    }
+}
+
+@media (max-width: 768px) {
+    .wrap {
+        --wrap-padding-block: calc(var(--space) * 1.25);
+        align-items: flex-start;
+    }
 }
 
 .card {
