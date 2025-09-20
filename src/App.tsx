@@ -1,11 +1,15 @@
 import React, {useEffect, useMemo, useRef, useState} from "react";
 import type {LatLon, Station} from "./types";
-import {geocodeNominatim} from "./lib/geocode";
+import {suggestNominatim} from "./lib/geocode";
+import type {GeocodeSuggestion} from "./lib/geocode";
 import {loadStations} from "./lib/gbfs";
 import {haversineKm, kmToMiles} from "./lib/distance";
 import {buildGMapsMulti} from "./lib/maps";
 import {computeBounds, expandBounds, contains} from "./lib/bounds";
+import type {Bounds} from "./lib/bounds";
 import ResultCard from "./components/ResultCard";
+
+const OUTSIDE_SERVICE_MESSAGE = "Current location outside of the service area.";
 
 export default function App() {
     const [deviceOrigin, setDeviceOrigin] = useState<LatLon | null>(null);
@@ -13,6 +17,18 @@ export default function App() {
     const [originMode, setOriginMode] = useState<"device" | "manual">("device");
     const [originText, setOriginText] = useState("");
     const [destText, setDestText] = useState("");
+    const [systemBounds, setSystemBounds] = useState<Bounds | null>(null);
+    const [deviceLocationLocked, setDeviceLocationLocked] = useState(false);
+    const [originSuggestions, setOriginSuggestions] = useState<GeocodeSuggestion[]>([]);
+    const [destSuggestions, setDestSuggestions] = useState<GeocodeSuggestion[]>([]);
+    const originSuggestSeq = useRef(0);
+    const destSuggestSeq = useRef(0);
+    const [originResolvedSuggestion, setOriginResolvedSuggestion] =
+        useState<GeocodeSuggestion | null>(null);
+    const [destResolvedSuggestion, setDestResolvedSuggestion] =
+        useState<GeocodeSuggestion | null>(null);
+    const [originInputFocused, setOriginInputFocused] = useState(false);
+    const [destInputFocused, setDestInputFocused] = useState(false);
     const [result, setResult] = useState<null | {
         pickup: Station;
         dropoff: Station;
@@ -49,6 +65,155 @@ export default function App() {
         );
     }, []);
 
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const stations = await loadStations();
+                if (cancelled) return;
+                const rawBounds = computeBounds(stations);
+                if (rawBounds) {
+                    setSystemBounds(expandBounds(rawBounds, 1));
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    console.error(err);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!deviceOrigin || !systemBounds) return;
+
+        if (!contains(systemBounds, deviceOrigin.lat, deviceOrigin.lon)) {
+            setDeviceLocationLocked(true);
+            setOriginErr((prev) =>
+                prev === OUTSIDE_SERVICE_MESSAGE ? prev : OUTSIDE_SERVICE_MESSAGE
+            );
+            setOriginMode((mode) => (mode === "device" ? "manual" : mode));
+        } else {
+            setDeviceLocationLocked(false);
+            setOriginErr((prev) => (prev === OUTSIDE_SERVICE_MESSAGE ? null : prev));
+        }
+    }, [deviceOrigin, systemBounds]);
+
+    useEffect(() => {
+        const seq = ++originSuggestSeq.current;
+        if (originMode !== "manual") {
+            setOriginSuggestions([]);
+            return;
+        }
+
+        const trimmed = originText.trim();
+        if (!trimmed || (trimmed.length < 3 && !trimmed.includes(","))) {
+            setOriginSuggestions([]);
+            return;
+        }
+
+        const handle = window.setTimeout(() => {
+            suggestNominatim(trimmed, {bounds: systemBounds, limit: 5})
+                .then((suggestions) => {
+                    if (originSuggestSeq.current === seq) {
+                        setOriginSuggestions(suggestions);
+                    }
+                })
+                .catch(() => {
+                    if (originSuggestSeq.current === seq) {
+                        setOriginSuggestions([]);
+                    }
+                });
+        }, 200);
+
+        return () => {
+            window.clearTimeout(handle);
+        };
+    }, [originText, originMode, systemBounds]);
+
+    useEffect(() => {
+        const seq = ++destSuggestSeq.current;
+
+        const trimmed = destText.trim();
+        if (!trimmed || (trimmed.length < 3 && !trimmed.includes(","))) {
+            setDestSuggestions([]);
+            return;
+        }
+
+        const handle = window.setTimeout(() => {
+            suggestNominatim(trimmed, {bounds: systemBounds, limit: 5})
+                .then((suggestions) => {
+                    if (destSuggestSeq.current === seq) {
+                        setDestSuggestions(suggestions);
+                    }
+                })
+                .catch(() => {
+                    if (destSuggestSeq.current === seq) {
+                        setDestSuggestions([]);
+                    }
+                });
+        }, 200);
+
+        return () => {
+            window.clearTimeout(handle);
+        };
+    }, [destText, systemBounds]);
+
+    const trimmedOrigin = originText.trim();
+    const trimmedDest = destText.trim();
+
+    const originSuggestionSelected = Boolean(
+        originResolvedSuggestion && originResolvedSuggestion.label === trimmedOrigin
+    );
+    const destSuggestionSelected = Boolean(
+        destResolvedSuggestion && destResolvedSuggestion.label === trimmedDest
+    );
+
+    const originNeedsSuggestionNotice =
+        originMode === "manual" && trimmedOrigin.length > 0 && !originSuggestionSelected;
+    const destNeedsSuggestionNotice =
+        trimmedDest.length > 0 && !destSuggestionSelected;
+
+    const canPlan =
+        destSuggestionSelected &&
+        (originMode === "manual" ? originSuggestionSelected : true);
+    const planDisabled = loading || !canPlan;
+    const planButtonText = loading
+        ? "Planning…"
+        : canPlan
+        ? "Plan"
+        : originMode === "manual"
+        ? "Select a starting point and a destination from the suggestions to continue"
+        : "Select a destination from the suggestions to continue";
+
+    const showOriginSuggestions =
+        originMode === "manual" && originInputFocused && originSuggestions.length > 0;
+    const showDestSuggestions = destInputFocused && destSuggestions.length > 0;
+
+    function handleOriginSuggestionSelect(suggestion: GeocodeSuggestion) {
+        setOriginText(suggestion.label);
+        setOriginResolvedSuggestion(suggestion);
+        setOriginSuggestions([]);
+        setOriginInputFocused(false);
+    }
+
+    function handleDestSuggestionSelect(suggestion: GeocodeSuggestion) {
+        setDestText(suggestion.label);
+        setDestResolvedSuggestion(suggestion);
+        setDestSuggestions([]);
+        setDestInputFocused(false);
+    }
+
+    const originStatusMessage = originErr
+        ? originErr
+        : deviceOrigin
+        ? `${deviceOrigin.lat.toFixed(5)}, ${deviceOrigin.lon.toFixed(5)}`
+        : "Requesting precise location… allow your browser to share it.";
+    const originStatusHasError = Boolean(originErr);
+    const deviceOptionDisabled = deviceLocationLocked;
+
     async function handlePlan(e?: React.FormEvent) {
         e?.preventDefault();
         setError(null);
@@ -56,19 +221,33 @@ export default function App() {
 
         let manualOriginInput: string | null = null;
         if (originMode === "manual") {
-            manualOriginInput = originText.trim();
+            manualOriginInput = trimmedOrigin;
             if (!manualOriginInput) {
                 setError("Enter a starting location.");
                 return;
             }
-        } else if (!deviceOrigin) {
-            setError("Allow location access first or enter a starting location manually.");
+            if (
+                !originResolvedSuggestion ||
+                originResolvedSuggestion.label !== manualOriginInput
+            ) {
+                setError("Select a starting location from the suggestions.");
+                return;
+            }
+        } else if (!deviceOrigin || deviceLocationLocked) {
+            setError(
+                deviceLocationLocked
+                    ? OUTSIDE_SERVICE_MESSAGE
+                    : "Allow location access first or enter a starting location manually."
+            );
             return;
         }
 
-        const trimmedDest = destText.trim();
         if (!trimmedDest) {
             setError("Enter a destination.");
+            return;
+        }
+        if (!destResolvedSuggestion || destResolvedSuggestion.label !== trimmedDest) {
+            setError("Select a destination from the suggestions.");
             return;
         }
 
@@ -77,21 +256,13 @@ export default function App() {
         try {
             let originForTrip: LatLon;
             if (manualOriginInput !== null) {
-                try {
-                    const manualResolved = await geocodeNominatim(manualOriginInput);
-                    originForTrip = {lat: manualResolved.lat, lon: manualResolved.lon};
-                } catch (err: any) {
-                    const msg = err?.message;
-                    if (typeof msg === "string" && msg === "Destination not found.") {
-                        throw new Error("Starting location not found.");
-                    }
-                    throw err;
-                }
+                const manualResolved = originResolvedSuggestion!;
+                originForTrip = {lat: manualResolved.lat, lon: manualResolved.lon};
             } else {
                 originForTrip = deviceOrigin!;
             }
 
-            const ge = await geocodeNominatim(trimmedDest);
+            const ge = destResolvedSuggestion!;
 
             const stations = await loadStations();
             const rawBounds = computeBounds(stations);
@@ -174,30 +345,30 @@ export default function App() {
                         <div className="label">Starting location</div>
                         <div className="info">
                             <div className="origin-options">
-                                <label className="origin-option">
+                                <label
+                                    className={`origin-option${
+                                        deviceOptionDisabled ? " origin-option--disabled" : ""
+                                    }`}
+                                    aria-disabled={deviceOptionDisabled}
+                                >
                                     <input
                                         type="radio"
                                         name="origin-mode"
                                         value="device"
                                         checked={originMode === "device"}
                                         onChange={() => setOriginMode("device")}
+                                        disabled={deviceOptionDisabled}
                                     />
                                     <span className="origin-option__body">
                                         <span className="origin-option__title">Use my current location</span>
                                         <span
                                             className={`origin-option__status${
-                                                originErr && originMode === "device"
+                                                originStatusHasError
                                                     ? " origin-option__status--error"
                                                     : ""
                                             }`}
                                         >
-                                            {deviceOrigin ? (
-                                                `${deviceOrigin.lat.toFixed(5)}, ${deviceOrigin.lon.toFixed(5)}`
-                                            ) : originErr ? (
-                                                originErr
-                                            ) : (
-                                                "Requesting precise location… allow your browser to share it."
-                                            )}
+                                            {originStatusMessage}
                                         </span>
                                     </span>
                                 </label>
@@ -217,14 +388,47 @@ export default function App() {
 
                                 {originMode === "manual" && (
                                     <div className="origin-input-wrapper">
-                                        <input
-                                            className="input origin-input"
-                                            inputMode="search"
-                                            placeholder="address or lat,lon"
-                                            value={originText}
-                                            onChange={(e) => setOriginText(e.target.value)}
-                                            aria-label="Starting location"
-                                        />
+                                        <div className="autocomplete">
+                                            <input
+                                                className="input origin-input"
+                                                inputMode="search"
+                                                placeholder="address or lat,lon"
+                                                value={originText}
+                                                onChange={(e) => {
+                                                    setOriginText(e.target.value);
+                                                    setOriginResolvedSuggestion(null);
+                                                }}
+                                                onFocus={() => setOriginInputFocused(true)}
+                                                onBlur={() => setOriginInputFocused(false)}
+                                                aria-label="Starting location"
+                                                autoComplete="off"
+                                            />
+                                            {showOriginSuggestions && (
+                                                <ul
+                                                    className="autocomplete__list"
+                                                    role="listbox"
+                                                    onMouseDown={(e) => e.preventDefault()}
+                                                >
+                                                    {originSuggestions.map((suggestion, idx) => (
+                                                        <li
+                                                            key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
+                                                            className="autocomplete__item"
+                                                        >
+                                                            <button
+                                                                type="button"
+                                                                className="autocomplete__option"
+                                                                onMouseDown={(e) => {
+                                                                    e.preventDefault();
+                                                                    handleOriginSuggestionSelect(suggestion);
+                                                                }}
+                                                            >
+                                                                {suggestion.label}
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -234,16 +438,53 @@ export default function App() {
                     <div className="group">
                         <div className="label">Destination</div>
                         <div className="row">
-                            <input
-                                className="input"
-                                inputMode="search"
-                                placeholder="address or lat,lon"
-                                value={destText}
-                                onChange={(e) => setDestText(e.target.value)}
-                                aria-label="Destination"
-                            />
-                            <button type="submit" className="btn btn--md block-gap" disabled={loading}>
-                                {loading ? "Planning…" : "Plan"}
+                            <div className="autocomplete">
+                                <input
+                                    className="input"
+                                    inputMode="search"
+                                    placeholder="address or lat,lon"
+                                    value={destText}
+                                    onChange={(e) => {
+                                        setDestText(e.target.value);
+                                        setDestResolvedSuggestion(null);
+                                    }}
+                                    onFocus={() => setDestInputFocused(true)}
+                                    onBlur={() => setDestInputFocused(false)}
+                                    aria-label="Destination"
+                                    autoComplete="off"
+                                />
+                                {showDestSuggestions && (
+                                    <ul
+                                        className="autocomplete__list"
+                                        role="listbox"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                    >
+                                        {destSuggestions.map((suggestion, idx) => (
+                                            <li
+                                                key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
+                                                className="autocomplete__item"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    className="autocomplete__option"
+                                                    onMouseDown={(e) => {
+                                                        e.preventDefault();
+                                                        handleDestSuggestionSelect(suggestion);
+                                                    }}
+                                                >
+                                                    {suggestion.label}
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                            <button
+                                type="submit"
+                                className="btn btn--md block-gap"
+                                disabled={planDisabled}
+                            >
+                                {planButtonText}
                             </button>
                         </div>
                     </div>
