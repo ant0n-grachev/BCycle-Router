@@ -350,6 +350,7 @@ export default function App() {
             cancelled = true;
         };
     }, [
+        originPoint,
         originPoint?.lat,
         originPoint?.lon,
         originMode,
@@ -468,6 +469,7 @@ export default function App() {
     }, [
         destSuggestionSelected,
         destResolvedSuggestion,
+        originPoint,
         originPoint?.lat,
         originPoint?.lon,
         originMode,
