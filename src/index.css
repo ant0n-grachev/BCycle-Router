@@ -211,7 +211,7 @@ body {
 }
 
 .origin-input-wrapper {
-    padding-left: calc(1.25rem + 0.75rem);
+    padding-left: 0;
 }
 
 .origin-input {
