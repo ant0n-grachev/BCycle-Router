@@ -276,7 +276,7 @@ export default function App() {
         ? originErr
         : deviceOrigin
         ? `${deviceOrigin.lat.toFixed(5)}, ${deviceOrigin.lon.toFixed(5)}`
-        : "Requesting precise location… allow your browser to share it.";
+        : "Requesting precise location...";
     const originStatusHasError = Boolean(originErr);
     const deviceOptionDisabled = deviceLocationLocked;
 
@@ -706,7 +706,7 @@ export default function App() {
                     {showNearestError && <div className="alert">{nearestError}</div>}
 
                     {showPlanLoadingCard && (
-                        <div className="result-card block-gap">Planning your trip…</div>
+                        <div className="result-card block-gap">Planning your trip...</div>
                     )}
 
                     {result && (
@@ -732,7 +732,7 @@ export default function App() {
                     )}
 
                     {showNearestLoadingCard && (
-                        <div className="result-card block-gap">Finding the closest station…</div>
+                        <div className="result-card block-gap">Finding the closest station...</div>
                     )}
 
                     {showNearestCard && nearestResult && (
