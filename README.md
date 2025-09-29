@@ -2,6 +2,13 @@
 
 Madison BCycle Router is a single-page React application that helps riders plan a seamless bike-share trip across Madison, Wisconsin. The app automatically finds the closest station with an available bike near the rider, locates a dock near the destination, and links out to Google Maps with the combined walking and biking directions.
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/c60c2578-a7bd-4398-b685-d9bcca81db23"
+       alt="Screenshot"
+       width="500"
+       style="border-radius: 50%;" />
+</p>
+
 ## Key features
 - **Location-aware planning** – Requests the rider's precise location through the browser's Geolocation API to anchor the starting point of the trip.
 - **Flexible destinations** – Accepts either a street address or explicit latitude/longitude coordinates and geocodes them against OpenStreetMap's Nominatim service.
