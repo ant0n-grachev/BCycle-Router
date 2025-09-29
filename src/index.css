@@ -307,6 +307,22 @@ body {
     outline: none;
 }
 
+.autocomplete__empty {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    padding: 0.65rem 0.85rem;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    z-index: 20;
+    text-align: left;
+}
+
 /* Buttons */
 .btn {
     display: flex;

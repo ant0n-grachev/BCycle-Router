@@ -20,7 +20,9 @@ export default function App() {
     const [systemBounds, setSystemBounds] = useState<Bounds | null>(null);
     const [deviceLocationLocked, setDeviceLocationLocked] = useState(false);
     const [originSuggestions, setOriginSuggestions] = useState<GeocodeSuggestion[]>([]);
+    const [originNoResults, setOriginNoResults] = useState(false);
     const [destSuggestions, setDestSuggestions] = useState<GeocodeSuggestion[]>([]);
+    const [destNoResults, setDestNoResults] = useState(false);
     const originSuggestSeq = useRef(0);
     const destSuggestSeq = useRef(0);
     const originInputRef = useRef<HTMLInputElement | null>(null);
@@ -119,25 +121,30 @@ export default function App() {
         const seq = ++originSuggestSeq.current;
         if (originMode !== "manual") {
             setOriginSuggestions([]);
+            setOriginNoResults(false);
             return;
         }
 
         const trimmed = originText.trim();
         if (!trimmed || (trimmed.length < 3 && !trimmed.includes(","))) {
             setOriginSuggestions([]);
+            setOriginNoResults(false);
             return;
         }
 
+        setOriginNoResults(false);
         const handle = window.setTimeout(() => {
             suggestNominatim(trimmed, {bounds: systemBounds, limit: 5})
                 .then((suggestions) => {
                     if (originSuggestSeq.current === seq) {
                         setOriginSuggestions(suggestions);
+                        setOriginNoResults(suggestions.length === 0);
                     }
                 })
                 .catch(() => {
                     if (originSuggestSeq.current === seq) {
                         setOriginSuggestions([]);
+                        setOriginNoResults(false);
                     }
                 });
         }, 200);
@@ -153,19 +160,23 @@ export default function App() {
         const trimmed = destText.trim();
         if (!trimmed || (trimmed.length < 3 && !trimmed.includes(","))) {
             setDestSuggestions([]);
+            setDestNoResults(false);
             return;
         }
 
+        setDestNoResults(false);
         const handle = window.setTimeout(() => {
             suggestNominatim(trimmed, {bounds: systemBounds, limit: 5})
                 .then((suggestions) => {
                     if (destSuggestSeq.current === seq) {
                         setDestSuggestions(suggestions);
+                        setDestNoResults(suggestions.length === 0);
                     }
                 })
                 .catch(() => {
                     if (destSuggestSeq.current === seq) {
                         setDestSuggestions([]);
+                        setDestNoResults(false);
                     }
                 });
         }, 200);
@@ -208,8 +219,9 @@ export default function App() {
     );
 
     const showOriginSuggestions =
-        originMode === "manual" && originInputFocused && originSuggestions.length > 0;
-    const showDestSuggestions = destInputFocused && destSuggestions.length > 0;
+        originMode === "manual" && originInputFocused && (originSuggestions.length > 0 || originNoResults);
+    const showDestSuggestions =
+        destInputFocused && (destSuggestions.length > 0 || destNoResults);
     const showOriginClear = originMode === "manual" && originText.length > 0;
     const showDestClear = destText.length > 0;
     const showNearestError = Boolean(nearestError && !destSuggestionSelected);
@@ -223,6 +235,7 @@ export default function App() {
         setOriginText(suggestion.label);
         setOriginResolvedSuggestion(suggestion);
         setOriginSuggestions([]);
+        setOriginNoResults(false);
         setOriginInputFocused(false);
     }
 
@@ -230,6 +243,7 @@ export default function App() {
         setDestText(suggestion.label);
         setDestResolvedSuggestion(suggestion);
         setDestSuggestions([]);
+        setDestNoResults(false);
         setDestInputFocused(false);
     }
 
@@ -238,6 +252,7 @@ export default function App() {
         setOriginText("");
         setOriginResolvedSuggestion(null);
         setOriginSuggestions([]);
+        setOriginNoResults(false);
         window.requestAnimationFrame(() => {
             originInputRef.current?.focus();
         });
@@ -248,6 +263,7 @@ export default function App() {
         setDestText("");
         setDestResolvedSuggestion(null);
         setDestSuggestions([]);
+        setDestNoResults(false);
         setResult(null);
         setError(null);
         setPlanLoading(false);
@@ -580,29 +596,35 @@ export default function App() {
                                                         </button>
                                                     )}
                                                     {showOriginSuggestions && (
-                                                        <ul
-                                                            className="autocomplete__list"
-                                                            role="listbox"
-                                                            onMouseDown={(e) => e.preventDefault()}
-                                                        >
-                                                            {originSuggestions.map((suggestion, idx) => (
-                                                                <li
-                                                                    key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
-                                                                    className="autocomplete__item"
-                                                                >
-                                                                    <button
-                                                                        type="button"
-                                                                        className="autocomplete__option"
-                                                                        onMouseDown={(e) => {
-                                                                            e.preventDefault();
-                                                                            handleOriginSuggestionSelect(suggestion);
-                                                                        }}
+                                                        originNoResults && originSuggestions.length === 0 ? (
+                                                            <div className="autocomplete__empty" role="status">
+                                                                Location not found
+                                                            </div>
+                                                        ) : (
+                                                            <ul
+                                                                className="autocomplete__list"
+                                                                role="listbox"
+                                                                onMouseDown={(e) => e.preventDefault()}
+                                                            >
+                                                                {originSuggestions.map((suggestion, idx) => (
+                                                                    <li
+                                                                        key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
+                                                                        className="autocomplete__item"
                                                                     >
-                                                                        {suggestion.label}
-                                                                    </button>
-                                                                </li>
-                                                            ))}
-                                                        </ul>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="autocomplete__option"
+                                                                            onMouseDown={(e) => {
+                                                                                e.preventDefault();
+                                                                                handleOriginSuggestionSelect(suggestion);
+                                                                            }}
+                                                                        >
+                                                                            {suggestion.label}
+                                                                        </button>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        )
                                                     )}
                                                 </div>
                                             </div>
@@ -644,29 +666,35 @@ export default function App() {
                                             </button>
                                         )}
                                         {showDestSuggestions && (
-                                            <ul
-                                                className="autocomplete__list"
-                                                role="listbox"
-                                                onMouseDown={(e) => e.preventDefault()}
-                                            >
-                                                {destSuggestions.map((suggestion, idx) => (
-                                                    <li
-                                                        key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
-                                                        className="autocomplete__item"
-                                                    >
-                                                        <button
-                                                            type="button"
-                                                            className="autocomplete__option"
-                                                            onMouseDown={(e) => {
-                                                                e.preventDefault();
-                                                                handleDestSuggestionSelect(suggestion);
-                                                            }}
+                                            destNoResults && destSuggestions.length === 0 ? (
+                                                <div className="autocomplete__empty" role="status">
+                                                    Location not found
+                                                </div>
+                                            ) : (
+                                                <ul
+                                                    className="autocomplete__list"
+                                                    role="listbox"
+                                                    onMouseDown={(e) => e.preventDefault()}
+                                                >
+                                                    {destSuggestions.map((suggestion, idx) => (
+                                                        <li
+                                                            key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
+                                                            className="autocomplete__item"
                                                         >
-                                                            {suggestion.label}
-                                                        </button>
-                                                    </li>
-                                                ))}
-                                            </ul>
+                                                            <button
+                                                                type="button"
+                                                                className="autocomplete__option"
+                                                                onMouseDown={(e) => {
+                                                                    e.preventDefault();
+                                                                    handleDestSuggestionSelect(suggestion);
+                                                                }}
+                                                            >
+                                                                {suggestion.label}
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )
                                         )}
                                     </div>
                                 </div>
