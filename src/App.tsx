@@ -2,7 +2,7 @@ import React, {useEffect, useMemo, useRef, useState} from "react";
 import type {LatLon, Station} from "./types";
 import {suggestNominatim} from "./lib/geocode";
 import type {GeocodeSuggestion} from "./lib/geocode";
-import {loadStations} from "./lib/gbfs";
+import {loadStations, SeasonClosedError} from "./lib/gbfs";
 import {haversineKm, kmToMiles, fmtMilesFeet} from "./lib/distance";
 import {buildGMapsMulti} from "./lib/maps";
 import {computeBounds, expandBounds, contains} from "./lib/bounds";
@@ -54,6 +54,7 @@ export default function App() {
           }
     >(null);
     const [nearestLoading, setNearestLoading] = useState(false);
+    const [seasonClosed, setSeasonClosed] = useState(false);
     const requestSeq = useRef(0);
     const nearestRequestSeq = useRef(0);
 
@@ -92,7 +93,10 @@ export default function App() {
                     setSystemBounds(expandBounds(rawBounds, 1));
                 }
             } catch (err) {
-                if (!cancelled) {
+                if (cancelled) return;
+                if (err instanceof SeasonClosedError) {
+                    setSeasonClosed(true);
+                } else {
                     console.error(err);
                 }
             }
@@ -281,6 +285,13 @@ export default function App() {
     const deviceOptionDisabled = deviceLocationLocked;
 
     useEffect(() => {
+        if (seasonClosed) {
+            setNearestResult(null);
+            setNearestError(null);
+            setNearestLoading(false);
+            return;
+        }
+
         if (!originPoint) {
             nearestRequestSeq.current++;
             setNearestResult(null);
@@ -371,9 +382,18 @@ export default function App() {
         originPoint?.lon,
         originMode,
         trimmedOrigin,
+        seasonClosed,
     ]);
 
     useEffect(() => {
+        if (seasonClosed) {
+            requestSeq.current++;
+            setPlanLoading(false);
+            setResult(null);
+            setError(null);
+            return;
+        }
+
         if (!destSuggestionSelected) {
             requestSeq.current++;
             setPlanLoading(false);
@@ -493,6 +513,7 @@ export default function App() {
         originSuggestionSelected,
         deviceLocationLocked,
         deviceOrigin,
+        seasonClosed,
     ]);
 
     return (
@@ -512,11 +533,16 @@ export default function App() {
                     </h1>
                 </header>
 
-                <form
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                    }}
-                >
+                {seasonClosed ? (
+                    <div className="result-card">
+                        Madison BCycle is currently closed. Check back when the system reopens.
+                    </div>
+                ) : (
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                        }}
+                    >
                     <div className="group">
                         <div className="info location-panel">
                             <div className="location-panel__section">
@@ -757,7 +783,8 @@ export default function App() {
                             </a>
                         </div>
                     )}
-                </form>
+                    </form>
+                )}
             </main>
         </div>
     );

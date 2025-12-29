@@ -4,6 +4,13 @@ const GBFS_INFO = "https://gbfs.bcycle.com/bcycle_madison/station_information.js
 const GBFS_STATUS = "https://gbfs.bcycle.com/bcycle_madison/station_status.json";
 const CACHE_TTL_MS = 15_000;
 
+export class SeasonClosedError extends Error {
+    constructor() {
+        super("Madison BCycle is closed for the season.");
+        this.name = "SeasonClosedError";
+    }
+}
+
 let cachedStations: Station[] | null = null;
 let cacheTimestamp = 0;
 let pending: Promise<Station[]> | null = null;
@@ -22,11 +29,18 @@ async function fetchStations(): Promise<Station[]> {
         fetchJson(GBFS_STATUS, "station status"),
     ]);
 
+    const infoStations = infoRes?.data?.stations;
+    const statusStations = statusRes?.data?.stations;
+
+    if (!Array.isArray(infoStations) || !Array.isArray(statusStations)) {
+        throw new SeasonClosedError();
+    }
+
     const infoMap: Record<string, any> = {};
-    for (const s of infoRes?.data?.stations ?? []) infoMap[s.station_id] = s;
+    for (const s of infoStations) infoMap[s.station_id] = s;
 
     const stations: Station[] = [];
-    for (const st of statusRes?.data?.stations ?? []) {
+    for (const st of statusStations) {
         const base = infoMap[st.station_id] || {};
         const lat = Number(base.lat);
         const lon = Number(base.lon);
@@ -46,6 +60,11 @@ async function fetchStations(): Promise<Station[]> {
             num_bikes_available: Number.isFinite(bikes) ? bikes : 0,
             num_docks_available: Number.isFinite(docks) ? docks : 0,
         });
+    }
+
+    const hasOpenStation = stations.some((station) => station.is_renting || station.is_returning);
+    if (!hasOpenStation) {
+        throw new SeasonClosedError();
     }
     return stations;
 }
