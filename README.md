@@ -31,6 +31,7 @@ Madison BCycle Router is a single-page React application that helps riders plan 
    npm start
    ```
 3. Open `http://localhost:3000` in a browser that supports the Geolocation API. Allow location access when prompted to see nearby stations.
+4. For testing, run `bcycleShowcase()` in the browser console to simulate every station having bikes/docks; refresh to return to live data.
 
 ## Data sources
 - [Madison BCycle GBFS](https://gbfs.bcycle.com/bcycle_madison/station_information.json): real-time station information and availability.
