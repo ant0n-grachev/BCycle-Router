@@ -3,6 +3,9 @@ import {Station} from "../types";
 const GBFS_INFO = "https://gbfs.bcycle.com/bcycle_madison/station_information.json";
 const GBFS_STATUS = "https://gbfs.bcycle.com/bcycle_madison/station_status.json";
 const CACHE_TTL_MS = 15_000;
+const CLOSED_RATIO_THRESHOLD = 0.9;
+
+let showcaseMode = false;
 
 export class SeasonClosedError extends Error {
     constructor() {
@@ -14,6 +17,13 @@ export class SeasonClosedError extends Error {
 let cachedStations: Station[] | null = null;
 let cacheTimestamp = 0;
 let pending: Promise<Station[]> | null = null;
+
+export function setShowcaseMode(enabled: boolean) {
+    showcaseMode = enabled;
+    cachedStations = null;
+    cacheTimestamp = 0;
+    pending = null;
+}
 
 async function fetchJson(url: string, label: string) {
     const res = await fetch(url);
@@ -62,8 +72,27 @@ async function fetchStations(): Promise<Station[]> {
         });
     }
 
-    const hasOpenStation = stations.some((station) => station.is_renting || station.is_returning);
-    if (!hasOpenStation) {
+    if (showcaseMode) {
+        return stations.map((station) => ({
+            ...station,
+            is_renting: true,
+            is_returning: true,
+            num_bikes_available: Math.max(station.num_bikes_available, 12),
+            num_docks_available: Math.max(station.num_docks_available, 12),
+        }));
+    }
+
+    const closedStations = stations.filter((station) => !station.is_renting && !station.is_returning).length;
+    const closedRatio = stations.length === 0 ? 1 : closedStations / stations.length;
+
+    if (closedRatio >= CLOSED_RATIO_THRESHOLD) {
+        throw new SeasonClosedError();
+    }
+    const totalBikesAvailable = stations.reduce(
+        (sum, station) => sum + station.num_bikes_available,
+        0
+    );
+    if (totalBikesAvailable === 0) {
         throw new SeasonClosedError();
     }
     return stations;

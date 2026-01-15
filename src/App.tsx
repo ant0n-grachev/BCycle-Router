@@ -2,19 +2,23 @@ import React, {useEffect, useMemo, useRef, useState} from "react";
 import type {LatLon, Station} from "./types";
 import {suggestNominatim} from "./lib/geocode";
 import type {GeocodeSuggestion} from "./lib/geocode";
-import {loadStations, SeasonClosedError} from "./lib/gbfs";
+import {loadStations, SeasonClosedError, setShowcaseMode} from "./lib/gbfs";
 import {haversineKm, kmToMiles, fmtMilesFeet} from "./lib/distance";
 import {buildGMapsMulti} from "./lib/maps";
 import {computeBounds, expandBounds, contains} from "./lib/bounds";
 import type {Bounds} from "./lib/bounds";
 import ResultCard from "./components/ResultCard";
+import {MapContainer, Rectangle, TileLayer, useMap} from "react-leaflet";
+import type {LatLngBoundsExpression} from "leaflet";
 
 const OUTSIDE_SERVICE_MESSAGE = "Current location outside of the service area.";
+const OSM_ATTRIBUTION =
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 export default function App() {
     const [deviceOrigin, setDeviceOrigin] = useState<LatLon | null>(null);
     const [originErr, setOriginErr] = useState<string | null>(null);
-    const [originMode, setOriginMode] = useState<"device" | "manual">("device");
+    const [originMode, setOriginMode] = useState<"device" | "manual">("manual");
     const [originText, setOriginText] = useState("");
     const [destText, setDestText] = useState("");
     const [systemBounds, setSystemBounds] = useState<Bounds | null>(null);
@@ -55,6 +59,9 @@ export default function App() {
     >(null);
     const [nearestLoading, setNearestLoading] = useState(false);
     const [seasonClosed, setSeasonClosed] = useState(false);
+    const [deviceLocationRequested, setDeviceLocationRequested] = useState(false);
+    const [serviceAreaExpanded, setServiceAreaExpanded] = useState(false);
+    const [boundsRefreshSeq, setBoundsRefreshSeq] = useState(0);
     const requestSeq = useRef(0);
     const nearestRequestSeq = useRef(0);
 
@@ -64,11 +71,22 @@ export default function App() {
     );
 
     useEffect(() => {
+        if (!systemBounds) {
+            setServiceAreaExpanded(false);
+        }
+    }, [systemBounds]);
+
+    useEffect(() => {
+        if (originMode !== "device") return;
+
+        setDeviceLocationRequested(true);
+
         if (!navigator.geolocation) {
             setOriginErr("Geolocation not supported by your browser.");
             setOriginMode("manual");
             return;
         }
+
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 setDeviceOrigin({lat: pos.coords.latitude, lon: pos.coords.longitude});
@@ -80,14 +98,16 @@ export default function App() {
             },
             {enableHighAccuracy: true, timeout: 15000, maximumAge: 0}
         );
-    }, []);
+    }, [originMode]);
 
     useEffect(() => {
         let cancelled = false;
-        (async () => {
+
+        async function fetchBounds() {
             try {
                 const stations = await loadStations();
                 if (cancelled) return;
+                setSeasonClosed(false);
                 const rawBounds = computeBounds(stations);
                 if (rawBounds) {
                     setSystemBounds(expandBounds(rawBounds, 1));
@@ -96,13 +116,32 @@ export default function App() {
                 if (cancelled) return;
                 if (err instanceof SeasonClosedError) {
                     setSeasonClosed(true);
+                    setSystemBounds(null);
                 } else {
                     console.error(err);
                 }
             }
-        })();
+        }
+
+        fetchBounds();
+        const interval = window.setInterval(fetchBounds, 60_000);
+
         return () => {
             cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, [boundsRefreshSeq]);
+
+    useEffect(() => {
+        function showcaseCommand(enabled: boolean = true) {
+            setShowcaseMode(Boolean(enabled));
+            setBoundsRefreshSeq((seq) => seq + 1);
+        }
+        (window as any).bcycleShowcase = showcaseCommand;
+        return () => {
+            if ((window as any).bcycleShowcase === showcaseCommand) {
+                delete (window as any).bcycleShowcase;
+            }
         };
     }, []);
 
@@ -280,9 +319,18 @@ export default function App() {
         ? originErr
         : deviceOrigin
         ? `${deviceOrigin.lat.toFixed(5)}, ${deviceOrigin.lon.toFixed(5)}`
-        : "Requesting precise location...";
+        : deviceLocationRequested
+        ? "Requesting precise location..."
+        : "Location access not requested.";
     const originStatusHasError = Boolean(originErr);
     const deviceOptionDisabled = deviceLocationLocked;
+    const serviceAreaBounds = useMemo<LatLngBoundsExpression | null>(() => {
+        if (!systemBounds) return null;
+        return [
+            [systemBounds.south, systemBounds.west],
+            [systemBounds.north, systemBounds.east],
+        ];
+    }, [systemBounds]);
 
     useEffect(() => {
         if (seasonClosed) {
@@ -534,10 +582,38 @@ export default function App() {
                 </header>
 
                 {seasonClosed ? (
-                    <div className="result-card">
-                        Madison BCycle is currently closed. Check back when the system reopens.
+                    <div className="service-area__closed">
+                        Madison BCycle is currently closed.
                     </div>
                 ) : (
+                    <section className="service-area">
+                        <div className="service-area__header">
+                            <div>
+                                <div className="service-area__label">Service area</div>
+                                <div className="service-area__hint">View the current system boundary.</div>
+                            </div>
+                            <button
+                                type="button"
+                                className="service-area__toggle"
+                                onClick={() => setServiceAreaExpanded((prev) => !prev)}
+                                disabled={!serviceAreaBounds}
+                            >
+                                {serviceAreaExpanded ? "Hide map" : "Show map"}
+                            </button>
+                        </div>
+                        {serviceAreaExpanded && (
+                            <div className="service-area__map-wrapper">
+                                {serviceAreaBounds ? (
+                                    <ServiceAreaMap bounds={serviceAreaBounds}/>
+                                ) : (
+                                    <div className="service-area__empty">Service area unavailable.</div>
+                                )}
+                            </div>
+                        )}
+                    </section>
+                )}
+
+                {seasonClosed ? null : (
                     <form
                         onSubmit={(e) => {
                             e.preventDefault();
@@ -807,4 +883,35 @@ function pickNearestWith(
         )
         .map((s) => ({s, d: haversineKm(origin, {lat: s.lat, lon: s.lon})}))
         .sort((a, b) => a.d - b.d)[0]?.s ?? null;
+}
+
+function ServiceAreaMap({bounds}: {bounds: LatLngBoundsExpression}) {
+    return (
+        <MapContainer
+            className="service-area__map"
+            bounds={bounds}
+            dragging={false}
+            doubleClickZoom={false}
+            scrollWheelZoom={false}
+            touchZoom={false}
+            boxZoom={false}
+            keyboard={false}
+            zoomControl={false}
+        >
+            <BoundsUpdater bounds={bounds}/>
+            <TileLayer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution={OSM_ATTRIBUTION}
+            />
+            <Rectangle bounds={bounds} pathOptions={{color: "#0ea5e9", weight: 2}}/>
+        </MapContainer>
+    );
+}
+
+function BoundsUpdater({bounds}: {bounds: LatLngBoundsExpression}) {
+    const map = useMap();
+    useEffect(() => {
+        map.fitBounds(bounds, {padding: [24, 24]});
+    }, [map, bounds]);
+    return null;
 }

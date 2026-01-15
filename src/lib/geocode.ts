@@ -22,10 +22,8 @@ export async function geocodeNominatim(q: string): Promise<GeocodeSuggestion> {
         return {...maybe, label: `${maybe.lat.toFixed(5)}, ${maybe.lon.toFixed(5)}`};
     }
 
-    const biasedQuery = `${q} Madison`;
-
     const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", biasedQuery);
+    url.searchParams.set("q", q);
     url.searchParams.set("format", "json");
     url.searchParams.set("limit", "1");
 
@@ -62,9 +60,8 @@ export async function suggestNominatim(
         return [{...maybe, label: `${maybe.lat.toFixed(5)}, ${maybe.lon.toFixed(5)}`}];
     }
 
-    const biasedQuery = `${trimmed} Madison`;
     const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", biasedQuery);
+    url.searchParams.set("q", trimmed);
     url.searchParams.set("format", "json");
     url.searchParams.set("limit", String(Math.max(1, Math.min(10, Math.floor(limit)))));
     if (bounds) {

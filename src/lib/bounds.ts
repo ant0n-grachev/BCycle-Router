@@ -13,7 +13,7 @@ const milesToLonDeg = (miles: number, atLatDeg: number) =>
 
 export function computeBounds(stations: Station[]): Bounds | null {
     const usable = stations.filter(
-        (s) => s.is_installed && s.is_returning && Number.isFinite(s.lat) && Number.isFinite(s.lon)
+        (s) => s.is_installed && Number.isFinite(s.lat) && Number.isFinite(s.lon)
     );
     if (usable.length === 0) return null;
 
