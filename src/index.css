@@ -403,6 +403,11 @@ body {
     flex-wrap: wrap;
 }
 
+.service-area__actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
 .service-area__label {
     font-size: var(--fs-sm);
     font-weight: 600;

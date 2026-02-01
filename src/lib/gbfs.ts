@@ -5,6 +5,15 @@ const GBFS_STATUS = "https://gbfs.bcycle.com/bcycle_madison/station_status.json"
 const CACHE_TTL_MS = 15_000;
 const CLOSED_RATIO_THRESHOLD = 0.9;
 
+type CacheEntry = {
+    stations: Station[] | null;
+    timestamp: number;
+    pending: Promise<Station[]> | null;
+};
+
+const strictCache: CacheEntry = {stations: null, timestamp: 0, pending: null};
+const relaxedCache: CacheEntry = {stations: null, timestamp: 0, pending: null};
+
 let showcaseMode = false;
 
 export class SeasonClosedError extends Error {
@@ -14,15 +23,14 @@ export class SeasonClosedError extends Error {
     }
 }
 
-let cachedStations: Station[] | null = null;
-let cacheTimestamp = 0;
-let pending: Promise<Station[]> | null = null;
-
 export function setShowcaseMode(enabled: boolean) {
     showcaseMode = enabled;
-    cachedStations = null;
-    cacheTimestamp = 0;
-    pending = null;
+    strictCache.stations = null;
+    strictCache.timestamp = 0;
+    strictCache.pending = null;
+    relaxedCache.stations = null;
+    relaxedCache.timestamp = 0;
+    relaxedCache.pending = null;
 }
 
 async function fetchJson(url: string, label: string) {
@@ -33,7 +41,7 @@ async function fetchJson(url: string, label: string) {
     return res.json();
 }
 
-async function fetchStations(): Promise<Station[]> {
+async function fetchStations({allowClosed = false}: {allowClosed?: boolean} = {}): Promise<Station[]> {
     const [infoRes, statusRes] = await Promise.all([
         fetchJson(GBFS_INFO, "station information"),
         fetchJson(GBFS_STATUS, "station status"),
@@ -85,14 +93,12 @@ async function fetchStations(): Promise<Station[]> {
     const closedStations = stations.filter((station) => !station.is_renting && !station.is_returning).length;
     const closedRatio = stations.length === 0 ? 1 : closedStations / stations.length;
 
-    if (closedRatio >= CLOSED_RATIO_THRESHOLD) {
-        throw new SeasonClosedError();
-    }
     const totalBikesAvailable = stations.reduce(
         (sum, station) => sum + station.num_bikes_available,
         0
     );
-    if (totalBikesAvailable === 0) {
+
+    if (!allowClosed && (closedRatio >= CLOSED_RATIO_THRESHOLD || totalBikesAvailable === 0)) {
         throw new SeasonClosedError();
     }
     return stations;
@@ -100,31 +106,38 @@ async function fetchStations(): Promise<Station[]> {
 
 export interface LoadStationsOptions {
     forceRefresh?: boolean;
+    allowClosed?: boolean;
 }
 
-export function loadStations({forceRefresh = false}: LoadStationsOptions = {}): Promise<Station[]> {
+function getCache(allowClosed: boolean) {
+    return allowClosed ? relaxedCache : strictCache;
+}
+
+export function loadStations({forceRefresh = false, allowClosed = false}: LoadStationsOptions = {}): Promise<Station[]> {
     const now = Date.now();
-    if (!forceRefresh && cachedStations && now - cacheTimestamp < CACHE_TTL_MS) {
-        return Promise.resolve(cachedStations);
+    const cache = getCache(allowClosed);
+
+    if (!forceRefresh && cache.stations && now - cache.timestamp < CACHE_TTL_MS) {
+        return Promise.resolve(cache.stations);
     }
 
-    if (!forceRefresh && pending) {
-        return pending;
+    if (!forceRefresh && cache.pending) {
+        return cache.pending;
     }
 
-    const request = fetchStations()
+    const request = fetchStations({allowClosed})
         .then((stations) => {
-            cachedStations = stations;
-            cacheTimestamp = Date.now();
+            cache.stations = stations;
+            cache.timestamp = Date.now();
             return stations;
         })
         .finally(() => {
-            if (pending === request) {
-                pending = null;
+            if (cache.pending === request) {
+                cache.pending = null;
             }
         });
 
-    pending = request;
+    cache.pending = request;
 
     return request;
 }

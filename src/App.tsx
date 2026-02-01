@@ -1,42 +1,37 @@
 import React, {useEffect, useMemo, useRef, useState} from "react";
 import type {LatLon, Station} from "./types";
-import {suggestNominatim} from "./lib/geocode";
 import type {GeocodeSuggestion} from "./lib/geocode";
-import {loadStations, SeasonClosedError, setShowcaseMode} from "./lib/gbfs";
-import {haversineKm, kmToMiles, fmtMilesFeet} from "./lib/distance";
+import {setShowcaseMode} from "./lib/gbfs";
+import {haversineKm, kmToMiles} from "./lib/distance";
 import {buildGMapsMulti} from "./lib/maps";
-import {computeBounds, expandBounds, contains} from "./lib/bounds";
-import type {Bounds} from "./lib/bounds";
-import ResultCard from "./components/ResultCard";
+import {contains} from "./lib/bounds";
+import {
+    AutocompleteField,
+    LocationPanel,
+    OriginSection,
+    PlanActions,
+    StationMarker,
+} from "./components";
+import type {LocationSection} from "./components";
 import {MapContainer, Rectangle, TileLayer, useMap} from "react-leaflet";
 import type {LatLngBoundsExpression} from "leaflet";
+import {
+    useSuggestions,
+    useDeviceLocation,
+    useLatestAsync,
+    useServiceAreaData,
+    useOriginPoint,
+    useDestinationSelection,
+} from "./hooks";
 
 const OUTSIDE_SERVICE_MESSAGE = "Current location outside of the service area.";
 const OSM_ATTRIBUTION =
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 export default function App() {
-    const [deviceOrigin, setDeviceOrigin] = useState<LatLon | null>(null);
-    const [originErr, setOriginErr] = useState<string | null>(null);
     const [originMode, setOriginMode] = useState<"device" | "manual">("manual");
-    const [originText, setOriginText] = useState("");
-    const [destText, setDestText] = useState("");
-    const [systemBounds, setSystemBounds] = useState<Bounds | null>(null);
-    const [deviceLocationLocked, setDeviceLocationLocked] = useState(false);
-    const [originSuggestions, setOriginSuggestions] = useState<GeocodeSuggestion[]>([]);
-    const [originNoResults, setOriginNoResults] = useState(false);
-    const [destSuggestions, setDestSuggestions] = useState<GeocodeSuggestion[]>([]);
-    const [destNoResults, setDestNoResults] = useState(false);
-    const originSuggestSeq = useRef(0);
-    const destSuggestSeq = useRef(0);
     const originInputRef = useRef<HTMLInputElement | null>(null);
     const destInputRef = useRef<HTMLInputElement | null>(null);
-    const [originResolvedSuggestion, setOriginResolvedSuggestion] =
-        useState<GeocodeSuggestion | null>(null);
-    const [destResolvedSuggestion, setDestResolvedSuggestion] =
-        useState<GeocodeSuggestion | null>(null);
-    const [originInputFocused, setOriginInputFocused] = useState(false);
-    const [destInputFocused, setDestInputFocused] = useState(false);
     const [result, setResult] = useState<null | {
         pickup: Station;
         dropoff: Station;
@@ -58,12 +53,52 @@ export default function App() {
           }
     >(null);
     const [nearestLoading, setNearestLoading] = useState(false);
-    const [seasonClosed, setSeasonClosed] = useState(false);
-    const [deviceLocationRequested, setDeviceLocationRequested] = useState(false);
     const [serviceAreaExpanded, setServiceAreaExpanded] = useState(false);
-    const [boundsRefreshSeq, setBoundsRefreshSeq] = useState(0);
-    const requestSeq = useRef(0);
-    const nearestRequestSeq = useRef(0);
+    const runNearestTask = useLatestAsync();
+    const runPlanTask = useLatestAsync();
+
+    const {
+        data: serviceAreaData,
+        seasonClosed,
+        refresh: refreshServiceArea,
+        refreshing: serviceAreaRefreshing,
+    } = useServiceAreaData();
+    const serviceAreaStations = serviceAreaData?.stations ?? null;
+    const systemBounds = serviceAreaData?.bounds ?? null;
+
+    const {
+        location: deviceOrigin,
+        requested: deviceLocationRequested,
+        locked: deviceLocationLocked,
+        status: deviceStatusMessage,
+    } = useDeviceLocation({
+        enabled: originMode === "device",
+        bounds: systemBounds,
+        outsideMessage: OUTSIDE_SERVICE_MESSAGE,
+        onRequireManual: () => setOriginMode((mode) => (mode === "device" ? "manual" : mode)),
+    });
+
+    const {
+        manualText: originText,
+        setManualText: setOriginText,
+        selectSuggestion: selectOriginSuggestion,
+        clearManual: clearOriginManual,
+        validate,
+    } = useOriginPoint({
+        mode: originMode,
+        deviceOrigin,
+        deviceLocked: deviceLocationLocked,
+        outsideMessage: OUTSIDE_SERVICE_MESSAGE,
+    });
+
+    const {
+        value: destText,
+        setValue: setDestText,
+        select: selectDestSuggestion,
+        clear: clearDestSelection,
+        isSelected: destSuggestionSelected,
+        validate: validateDestination,
+    } = useDestinationSelection();
 
     const isMobile = useMemo(
         () => /Android|iPhone|iPad|iPod/i.test(navigator.userAgent),
@@ -77,65 +112,9 @@ export default function App() {
     }, [systemBounds]);
 
     useEffect(() => {
-        if (originMode !== "device") return;
-
-        setDeviceLocationRequested(true);
-
-        if (!navigator.geolocation) {
-            setOriginErr("Geolocation not supported by your browser.");
-            setOriginMode("manual");
-            return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                setDeviceOrigin({lat: pos.coords.latitude, lon: pos.coords.longitude});
-                setOriginErr(null);
-            },
-            (err) => {
-                setOriginErr(err.message || "Location error");
-                setOriginMode((mode) => (mode === "device" ? "manual" : mode));
-            },
-            {enableHighAccuracy: true, timeout: 15000, maximumAge: 0}
-        );
-    }, [originMode]);
-
-    useEffect(() => {
-        let cancelled = false;
-
-        async function fetchBounds() {
-            try {
-                const stations = await loadStations();
-                if (cancelled) return;
-                setSeasonClosed(false);
-                const rawBounds = computeBounds(stations);
-                if (rawBounds) {
-                    setSystemBounds(expandBounds(rawBounds, 1));
-                }
-            } catch (err) {
-                if (cancelled) return;
-                if (err instanceof SeasonClosedError) {
-                    setSeasonClosed(true);
-                    setSystemBounds(null);
-                } else {
-                    console.error(err);
-                }
-            }
-        }
-
-        fetchBounds();
-        const interval = window.setInterval(fetchBounds, 60_000);
-
-        return () => {
-            cancelled = true;
-            window.clearInterval(interval);
-        };
-    }, [boundsRefreshSeq]);
-
-    useEffect(() => {
         function showcaseCommand(enabled: boolean = true) {
             setShowcaseMode(Boolean(enabled));
-            setBoundsRefreshSeq((seq) => seq + 1);
+            refreshServiceArea();
         }
         (window as any).bcycleShowcase = showcaseCommand;
         return () => {
@@ -143,170 +122,55 @@ export default function App() {
                 delete (window as any).bcycleShowcase;
             }
         };
-    }, []);
+    }, [refreshServiceArea]);
 
-    useEffect(() => {
-        if (!deviceOrigin || !systemBounds) return;
+    const {suggestions: originSuggestions, noResults: originNoResults, clear: clearOriginSuggestions} =
+        useSuggestions(originText, {enabled: originMode === "manual", bounds: systemBounds});
+    const {suggestions: destSuggestions, noResults: destNoResults, clear: clearDestSuggestions} =
+        useSuggestions(destText, {enabled: true, bounds: systemBounds});
 
-        if (!contains(systemBounds, deviceOrigin.lat, deviceOrigin.lon)) {
-            setDeviceLocationLocked(true);
-            setOriginErr((prev) =>
-                prev === OUTSIDE_SERVICE_MESSAGE ? prev : OUTSIDE_SERVICE_MESSAGE
-            );
-            setOriginMode((mode) => (mode === "device" ? "manual" : mode));
-        } else {
-            setDeviceLocationLocked(false);
-            setOriginErr((prev) => (prev === OUTSIDE_SERVICE_MESSAGE ? null : prev));
-        }
-    }, [deviceOrigin, systemBounds]);
 
-    useEffect(() => {
-        const seq = ++originSuggestSeq.current;
-        if (originMode !== "manual") {
-            setOriginSuggestions([]);
-            setOriginNoResults(false);
-            return;
-        }
-
-        const trimmed = originText.trim();
-        if (!trimmed || (trimmed.length < 3 && !trimmed.includes(","))) {
-            setOriginSuggestions([]);
-            setOriginNoResults(false);
-            return;
-        }
-
-        setOriginNoResults(false);
-        const handle = window.setTimeout(() => {
-            suggestNominatim(trimmed, {bounds: systemBounds, limit: 5})
-                .then((suggestions) => {
-                    if (originSuggestSeq.current === seq) {
-                        setOriginSuggestions(suggestions);
-                        setOriginNoResults(suggestions.length === 0);
-                    }
-                })
-                .catch(() => {
-                    if (originSuggestSeq.current === seq) {
-                        setOriginSuggestions([]);
-                        setOriginNoResults(false);
-                    }
-                });
-        }, 200);
-
-        return () => {
-            window.clearTimeout(handle);
-        };
-    }, [originText, originMode, systemBounds]);
-
-    useEffect(() => {
-        const seq = ++destSuggestSeq.current;
-
-        const trimmed = destText.trim();
-        if (!trimmed || (trimmed.length < 3 && !trimmed.includes(","))) {
-            setDestSuggestions([]);
-            setDestNoResults(false);
-            return;
-        }
-
-        setDestNoResults(false);
-        const handle = window.setTimeout(() => {
-            suggestNominatim(trimmed, {bounds: systemBounds, limit: 5})
-                .then((suggestions) => {
-                    if (destSuggestSeq.current === seq) {
-                        setDestSuggestions(suggestions);
-                        setDestNoResults(suggestions.length === 0);
-                    }
-                })
-                .catch(() => {
-                    if (destSuggestSeq.current === seq) {
-                        setDestSuggestions([]);
-                        setDestNoResults(false);
-                    }
-                });
-        }, 200);
-
-        return () => {
-            window.clearTimeout(handle);
-        };
-    }, [destText, systemBounds]);
-
-    const trimmedOrigin = originText.trim();
-    const trimmedDest = destText.trim();
-
-    const originSuggestionSelected = Boolean(
-        originResolvedSuggestion && originResolvedSuggestion.label === trimmedOrigin
-    );
-    const destSuggestionSelected = Boolean(
-        destResolvedSuggestion && destResolvedSuggestion.label === trimmedDest
-    );
-    const originPoint = useMemo<LatLon | null>(
-        () => {
-            if (originMode === "manual") {
-                if (!originSuggestionSelected || !originResolvedSuggestion) return null;
-                if (originResolvedSuggestion.label !== trimmedOrigin) return null;
-                return {
-                    lat: originResolvedSuggestion.lat,
-                    lon: originResolvedSuggestion.lon,
-                };
-            }
-            if (!deviceOrigin || deviceLocationLocked) return null;
-            return deviceOrigin;
-        },
-        [
-            originMode,
-            originSuggestionSelected,
-            originResolvedSuggestion,
-            trimmedOrigin,
-            deviceOrigin,
-            deviceLocationLocked,
-        ]
-    );
-
-    const showOriginSuggestions =
-        originMode === "manual" && originInputFocused && (originSuggestions.length > 0 || originNoResults);
-    const showDestSuggestions =
-        destInputFocused && (destSuggestions.length > 0 || destNoResults);
     const showOriginClear = originMode === "manual" && originText.length > 0;
     const showDestClear = destText.length > 0;
-    const showNearestError = Boolean(nearestError && !destSuggestionSelected);
-    const showNearestCard = Boolean(nearestResult && !destSuggestionSelected);
-    const showNearestLoadingCard = Boolean(
-        nearestLoading && !destSuggestionSelected && !nearestResult
+    const planState = useMemo(
+        () => ({loading: destSuggestionSelected && planLoading && !result, error}),
+        [destSuggestionSelected, planLoading, result, error]
     );
-    const showPlanLoadingCard = Boolean(destSuggestionSelected && planLoading && !result);
+    const nearestState = useMemo(
+        () => ({
+            loading: nearestLoading && !destSuggestionSelected && !nearestResult,
+            showCard: Boolean(nearestResult && !destSuggestionSelected),
+            error:
+                !destSuggestionSelected && !nearestResult && nearestError
+                    ? nearestError
+                    : null,
+        }),
+        [nearestLoading, destSuggestionSelected, nearestResult, nearestError]
+    );
 
     function handleOriginSuggestionSelect(suggestion: GeocodeSuggestion) {
-        setOriginText(suggestion.label);
-        setOriginResolvedSuggestion(suggestion);
-        setOriginSuggestions([]);
-        setOriginNoResults(false);
-        setOriginInputFocused(false);
+        selectOriginSuggestion(suggestion);
+        clearOriginSuggestions();
+        originInputRef.current?.blur();
     }
 
     function handleDestSuggestionSelect(suggestion: GeocodeSuggestion) {
-        setDestText(suggestion.label);
-        setDestResolvedSuggestion(suggestion);
-        setDestSuggestions([]);
-        setDestNoResults(false);
-        setDestInputFocused(false);
+        selectDestSuggestion(suggestion);
+        clearDestSuggestions();
+        destInputRef.current?.blur();
     }
 
     function handleClearOrigin() {
-        nearestRequestSeq.current++;
-        setOriginText("");
-        setOriginResolvedSuggestion(null);
-        setOriginSuggestions([]);
-        setOriginNoResults(false);
+        clearOriginManual();
+        clearOriginSuggestions();
         window.requestAnimationFrame(() => {
             originInputRef.current?.focus();
         });
     }
 
     function handleClearDestination() {
-        requestSeq.current++;
-        setDestText("");
-        setDestResolvedSuggestion(null);
-        setDestSuggestions([]);
-        setDestNoResults(false);
+        clearDestSelection();
+        clearDestSuggestions();
         setResult(null);
         setError(null);
         setPlanLoading(false);
@@ -315,14 +179,14 @@ export default function App() {
         });
     }
 
-    const originStatusMessage = originErr
-        ? originErr
+    const originStatusMessage = deviceStatusMessage
+        ? deviceStatusMessage
         : deviceOrigin
         ? `${deviceOrigin.lat.toFixed(5)}, ${deviceOrigin.lon.toFixed(5)}`
         : deviceLocationRequested
         ? "Requesting precise location..."
         : "Location access not requested.";
-    const originStatusHasError = Boolean(originErr);
+    const originStatusHasError = Boolean(deviceStatusMessage);
     const deviceOptionDisabled = deviceLocationLocked;
     const serviceAreaBounds = useMemo<LatLngBoundsExpression | null>(() => {
         if (!systemBounds) return null;
@@ -340,34 +204,31 @@ export default function App() {
             return;
         }
 
-        if (!originPoint) {
-            nearestRequestSeq.current++;
+        const {point: validOrigin, error: originError} = validate({forNearest: true});
+        if (!validOrigin) {
             setNearestResult(null);
             setNearestLoading(false);
-            if (originMode === "manual" && trimmedOrigin) {
-                setNearestError("Select a starting location from the suggestions.");
-            } else {
-                setNearestError(null);
-            }
+            setNearestError(originError);
             return;
         }
 
-        const requestId = ++nearestRequestSeq.current;
-        let cancelled = false;
+        if (!serviceAreaStations || !systemBounds) {
+            setNearestLoading(true);
+            setNearestResult(null);
+            setNearestError(null);
+            return;
+        }
+
         setNearestLoading(true);
         setNearestError(null);
         setNearestResult(null);
 
-        (async () => {
-            try {
-                const stations = await loadStations();
-                const rawBounds = computeBounds(stations);
-                if (!rawBounds) {
-                    throw new Error("Could not determine system bounds from stations.");
-                }
-                const bounds = expandBounds(rawBounds, 1);
+        runNearestTask(
+            async () => {
+                const stations = serviceAreaStations;
+                const bounds = systemBounds;
 
-                if (!contains(bounds, originPoint.lat, originPoint.lon)) {
+                if (!contains(bounds, validOrigin.lat, validOrigin.lon)) {
                     const message =
                         originMode === "manual"
                             ? "Starting location not found."
@@ -377,12 +238,12 @@ export default function App() {
 
                 let station = pickNearestWith(
                     stations,
-                    originPoint,
+                    validOrigin,
                     (s) => s.num_bikes_available > 0
                 );
                 let fallback = false;
                 if (!station) {
-                    station = pickNearestWith(stations, originPoint, () => true);
+                    station = pickNearestWith(stations, validOrigin, () => true);
                     fallback = true;
                 }
                 if (!station) {
@@ -390,103 +251,86 @@ export default function App() {
                 }
 
                 const distanceMi = kmToMiles(
-                    haversineKm(originPoint, {lat: station.lat, lon: station.lon})
+                    haversineKm(validOrigin, {lat: station.lat, lon: station.lon})
                 );
 
                 const params = new URLSearchParams({
                     api: "1",
-                    origin: `${originPoint.lat},${originPoint.lon}`,
+                    origin: `${validOrigin.lat},${validOrigin.lon}`,
                     destination: `${station.lat},${station.lon}`,
                     travelmode: "walking",
                 });
                 const link = `https://www.google.com/maps/dir/?${params.toString()}`;
 
-                if (nearestRequestSeq.current !== requestId || cancelled) return;
-
-                setNearestResult({
+                return {
                     station,
                     distanceMi,
                     link,
                     fallback,
-                });
-            } catch (err: any) {
-                if (nearestRequestSeq.current === requestId && !cancelled) {
-                    setNearestResult(null);
-                    setNearestError(err?.message || "Something went wrong.");
-                }
-            } finally {
-                if (nearestRequestSeq.current === requestId && !cancelled) {
-                    setNearestLoading(false);
-                }
+                };
+            },
+            {
+                onSuccess: (data) => setNearestResult(data),
+                onError: (message) => setNearestError(message),
+                onFinally: () => setNearestLoading(false),
             }
-        })();
-
-        return () => {
-            cancelled = true;
-        };
+        );
     }, [
-        originPoint,
-        originPoint?.lat,
-        originPoint?.lon,
-        originMode,
-        trimmedOrigin,
         seasonClosed,
+        validate,
+        originMode,
+        serviceAreaStations,
+        systemBounds,
+        runNearestTask,
     ]);
 
     useEffect(() => {
         if (seasonClosed) {
-            requestSeq.current++;
             setPlanLoading(false);
             setResult(null);
             setError(null);
             return;
         }
 
-        if (!destSuggestionSelected) {
-            requestSeq.current++;
+        const {selection: selectedDestination, error: destinationError} =
+            validateDestination();
+
+        if (!destSuggestionSelected || !selectedDestination) {
             setPlanLoading(false);
             setResult(null);
-            if (!destResolvedSuggestion) {
+            if (destText.trim()) {
+                setError(destinationError);
+            } else {
                 setError(null);
             }
             return;
         }
 
-        if (!originPoint) {
-            requestSeq.current++;
+        const {point: validOrigin, error: planOriginError} = validate();
+        if (!validOrigin) {
             setPlanLoading(false);
             setResult(null);
-            if (originMode === "manual") {
-                if (!trimmedOrigin) {
-                    setError("Enter a starting location.");
-                } else if (!originSuggestionSelected) {
-                    setError("Select a starting location from the suggestions.");
-                }
-            } else if (deviceLocationLocked) {
-                setError(OUTSIDE_SERVICE_MESSAGE);
-            } else if (!deviceOrigin) {
-                setError("Allow location access first or enter a starting location manually.");
-            }
+            setError(planOriginError);
             return;
         }
 
-        const requestId = ++requestSeq.current;
-        let cancelled = false;
+        if (!serviceAreaStations || !systemBounds) {
+            setPlanLoading(true);
+            setResult(null);
+            return;
+        }
+
         setPlanLoading(true);
         setError(null);
         setResult(null);
 
-        (async () => {
-            try {
-                const ge = destResolvedSuggestion!;
-                const stations = await loadStations();
-                const rawBounds = computeBounds(stations);
-                if (!rawBounds) {
-                    throw new Error("Could not determine system bounds from stations.");
-                }
-                const bounds = expandBounds(rawBounds, 1);
+        runPlanTask(
+            async () => {
+                const ge = selectedDestination;
+                const stations = serviceAreaStations;
+                const bounds = systemBounds;
 
-                if (!contains(bounds, originPoint.lat, originPoint.lon)) {
+                if (!contains(bounds, validOrigin.lat, validOrigin.lon)) {
                     const message =
                         originMode === "manual"
                             ? "Starting location not found."
@@ -500,7 +344,7 @@ export default function App() {
 
                 const pickup = pickNearestWith(
                     stations,
-                    originPoint,
+                    validOrigin,
                     (s) => s.num_bikes_available > 0
                 );
                 if (!pickup) throw new Error("No nearby stations with bikes available.");
@@ -514,7 +358,7 @@ export default function App() {
                 if (!dropoff) throw new Error("No stations with open docks near your destination.");
 
                 const dWalk1Mi = kmToMiles(
-                    haversineKm(originPoint, {lat: pickup.lat, lon: pickup.lon})
+                    haversineKm(validOrigin, {lat: pickup.lat, lon: pickup.lon})
                 );
                 const dBikeMi = kmToMiles(
                     haversineKm(
@@ -527,42 +371,84 @@ export default function App() {
                 );
 
                 const link = buildGMapsMulti(
-                    originPoint,
+                    validOrigin,
                     {lat: pickup.lat, lon: pickup.lon},
                     {lat: dropoff.lat, lon: dropoff.lon},
                     ge
                 );
 
-                if (requestSeq.current !== requestId || cancelled) return;
-
-                setResult({pickup, dropoff, link, dWalk1Mi, dBikeMi, dWalk2Mi});
-            } catch (err: any) {
-                if (requestSeq.current === requestId && !cancelled) {
-                    setError(err?.message || "Something went wrong.");
-                }
-            } finally {
-                if (requestSeq.current === requestId && !cancelled) {
-                    setPlanLoading(false);
-                }
+                return {pickup, dropoff, link, dWalk1Mi, dBikeMi, dWalk2Mi};
+            },
+            {
+                onSuccess: (data) => setResult(data),
+                onError: (message) => setError(message),
+                onFinally: () => setPlanLoading(false),
             }
-        })();
-
-        return () => {
-            cancelled = true;
-        };
+        );
     }, [
         destSuggestionSelected,
-        destResolvedSuggestion,
-        originPoint,
-        originPoint?.lat,
-        originPoint?.lon,
+        destText,
         originMode,
-        trimmedOrigin,
-        originSuggestionSelected,
-        deviceLocationLocked,
-        deviceOrigin,
+        validate,
+        validateDestination,
         seasonClosed,
+        serviceAreaStations,
+        systemBounds,
+        runPlanTask,
     ]);
+
+    const originAutocompleteField = (
+        <AutocompleteField
+            inputRef={originInputRef}
+            value={originText}
+            onChange={setOriginText}
+            placeholder="address or lat,lon"
+            ariaLabel="Starting location"
+            suggestions={originSuggestions}
+            noResults={originNoResults}
+            onSelect={handleOriginSuggestionSelect}
+            showClear={showOriginClear}
+            onClear={handleClearOrigin}
+        />
+    );
+
+    const destinationAutocompleteField = (
+        <AutocompleteField
+            inputRef={destInputRef}
+            value={destText}
+            onChange={setDestText}
+            placeholder="address or lat,lon"
+            ariaLabel="Destination"
+            suggestions={destSuggestions}
+            noResults={destNoResults}
+            onSelect={handleDestSuggestionSelect}
+            showClear={showDestClear}
+            onClear={handleClearDestination}
+        />
+    );
+
+    const locationSections: LocationSection[] = [
+        {
+            key: "origin",
+            title: "Starting location",
+            content: (
+                <OriginSection
+                    mode={originMode}
+                    disabled={deviceOptionDisabled}
+                    status={originStatusMessage}
+                    statusHasError={originStatusHasError}
+                    onModeChange={setOriginMode}
+                    manualField={originAutocompleteField}
+                />
+            ),
+            separatorAfter: true,
+        },
+        {
+            key: "destination",
+            title: "Destination",
+            content: destinationAutocompleteField,
+        },
+    ];
 
     return (
         <div className="wrap">
@@ -581,285 +467,66 @@ export default function App() {
                     </h1>
                 </header>
 
-                {seasonClosed ? (
+                {seasonClosed && (
                     <div className="service-area__closed">
                         Madison BCycle is currently closed.
                     </div>
-                ) : (
-                    <section className="service-area">
-                        <div className="service-area__header">
-                            <div>
-                                <div className="service-area__label">Service area</div>
-                                <div className="service-area__hint">View the current system boundary.</div>
-                            </div>
+                )}
+
+                <section className="service-area">
+                    <div className="service-area__header">
+                        <div>
+                            <div className="service-area__label">Service area</div>
+                            <div className="service-area__hint">View the current system boundary.</div>
+                        </div>
+                        <div className="service-area__actions">
+                            {serviceAreaExpanded && (
+                                <button
+                                    type="button"
+                                    className="service-area__toggle"
+                                    onClick={refreshServiceArea}
+                                    disabled={!serviceAreaBounds || serviceAreaRefreshing}
+                                >
+                                    {serviceAreaRefreshing ? "Refreshing..." : "Refresh"}
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 className="service-area__toggle"
                                 onClick={() => setServiceAreaExpanded((prev) => !prev)}
-                                disabled={!serviceAreaBounds}
+                                disabled={!serviceAreaBounds || !serviceAreaStations}
                             >
                                 {serviceAreaExpanded ? "Hide map" : "Show map"}
                             </button>
                         </div>
-                        {serviceAreaExpanded && (
-                            <div className="service-area__map-wrapper">
-                                {serviceAreaBounds ? (
-                                    <ServiceAreaMap bounds={serviceAreaBounds}/>
-                                ) : (
-                                    <div className="service-area__empty">Service area unavailable.</div>
-                                )}
-                            </div>
-                        )}
-                    </section>
-                )}
+                    </div>
+                    {serviceAreaExpanded && (
+                        <div className="service-area__map-wrapper">
+                            {serviceAreaBounds && serviceAreaStations ? (
+                                <ServiceAreaMap bounds={serviceAreaBounds} stations={serviceAreaStations}/>
+                            ) : (
+                                <div className="service-area__empty">Service area unavailable.</div>
+                            )}
+                        </div>
+                    )}
+                </section>
 
                 {seasonClosed ? null : (
-                    <form
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                        }}
-                    >
-                    <div className="group">
-                        <div className="info location-panel">
-                            <div className="location-panel__section">
-                                <div className="location-panel__title">Starting location</div>
-                                <div className="location-panel__content">
-                                    <div className="origin-options">
-                                        <label
-                                            className={`origin-option${
-                                                deviceOptionDisabled ? " origin-option--disabled" : ""
-                                            }`}
-                                            aria-disabled={deviceOptionDisabled}
-                                        >
-                                            <input
-                                                type="radio"
-                                                name="origin-mode"
-                                                value="device"
-                                                checked={originMode === "device"}
-                                                onChange={() => setOriginMode("device")}
-                                                disabled={deviceOptionDisabled}
-                                            />
-                                            <span className="origin-option__body">
-                                                <span className="origin-option__title">Use my current location</span>
-                                                <span
-                                                    className={`origin-option__status${
-                                                        originStatusHasError
-                                                            ? " origin-option__status--error"
-                                                            : ""
-                                                    }`}
-                                                >
-                                                    {originStatusMessage}
-                                                </span>
-                                            </span>
-                                        </label>
+                    <section>
+                        <LocationPanel sections={locationSections}/>
 
-                                        <label className="origin-option">
-                                            <input
-                                                type="radio"
-                                                name="origin-mode"
-                                                value="manual"
-                                                checked={originMode === "manual"}
-                                                onChange={() => setOriginMode("manual")}
-                                            />
-                                            <span className="origin-option__body">
-                                                <span className="origin-option__title">Enter a location manually</span>
-                                            </span>
-                                        </label>
+                        {planState.error && !planState.loading && (
+                            <div className="alert">{planState.error}</div>
+                        )}
 
-                                        {originMode === "manual" && (
-                                            <div className="origin-input-wrapper">
-                                                <div className="autocomplete">
-                                                    <input
-                                                        ref={originInputRef}
-                                                        className={`input origin-input${
-                                                            showOriginClear ? " input--with-clear" : ""
-                                                        }`}
-                                                        inputMode="search"
-                                                        placeholder="address or lat,lon"
-                                                        value={originText}
-                                                        onChange={(e) => {
-                                                            setOriginText(e.target.value);
-                                                            setOriginResolvedSuggestion(null);
-                                                        }}
-                                                        onFocus={() => setOriginInputFocused(true)}
-                                                        onBlur={() => setOriginInputFocused(false)}
-                                                        aria-label="Starting location"
-                                                        autoComplete="off"
-                                                    />
-                                                    {showOriginClear && (
-                                                        <button
-                                                            type="button"
-                                                            className="autocomplete__clear"
-                                                            onMouseDown={(e) => e.preventDefault()}
-                                                            onClick={handleClearOrigin}
-                                                            aria-label="Clear starting location"
-                                                        >
-                                                            &times;
-                                                        </button>
-                                                    )}
-                                                    {showOriginSuggestions && (
-                                                        originNoResults && originSuggestions.length === 0 ? (
-                                                            <div className="autocomplete__empty" role="status">
-                                                                Location not found
-                                                            </div>
-                                                        ) : (
-                                                            <ul
-                                                                className="autocomplete__list"
-                                                                role="listbox"
-                                                                onMouseDown={(e) => e.preventDefault()}
-                                                            >
-                                                                {originSuggestions.map((suggestion, idx) => (
-                                                                    <li
-                                                                        key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
-                                                                        className="autocomplete__item"
-                                                                    >
-                                                                        <button
-                                                                            type="button"
-                                                                            className="autocomplete__option"
-                                                                            onMouseDown={(e) => {
-                                                                                e.preventDefault();
-                                                                                handleOriginSuggestionSelect(suggestion);
-                                                                            }}
-                                                                        >
-                                                                            {suggestion.label}
-                                                                        </button>
-                                                                    </li>
-                                                                ))}
-                                                            </ul>
-                                                        )
-                                                    )}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="location-panel__separator" aria-hidden="true" />
-
-                            <div className="location-panel__section">
-                                <div className="location-panel__title">Destination</div>
-                                <div className="location-panel__content">
-                                    <div className="autocomplete">
-                                        <input
-                                            ref={destInputRef}
-                                            className={`input${showDestClear ? " input--with-clear" : ""}`}
-                                            inputMode="search"
-                                            placeholder="address or lat,lon"
-                                            value={destText}
-                                            onChange={(e) => {
-                                                setDestText(e.target.value);
-                                                setDestResolvedSuggestion(null);
-                                            }}
-                                            onFocus={() => setDestInputFocused(true)}
-                                            onBlur={() => setDestInputFocused(false)}
-                                            aria-label="Destination"
-                                            autoComplete="off"
-                                        />
-                                        {showDestClear && (
-                                            <button
-                                                type="button"
-                                                className="autocomplete__clear"
-                                                onMouseDown={(e) => e.preventDefault()}
-                                                onClick={handleClearDestination}
-                                                aria-label="Clear destination"
-                                            >
-                                                &times;
-                                            </button>
-                                        )}
-                                        {showDestSuggestions && (
-                                            destNoResults && destSuggestions.length === 0 ? (
-                                                <div className="autocomplete__empty" role="status">
-                                                    Location not found
-                                                </div>
-                                            ) : (
-                                                <ul
-                                                    className="autocomplete__list"
-                                                    role="listbox"
-                                                    onMouseDown={(e) => e.preventDefault()}
-                                                >
-                                                    {destSuggestions.map((suggestion, idx) => (
-                                                        <li
-                                                            key={`${suggestion.lat}-${suggestion.lon}-${idx}`}
-                                                            className="autocomplete__item"
-                                                        >
-                                                            <button
-                                                                type="button"
-                                                                className="autocomplete__option"
-                                                                onMouseDown={(e) => {
-                                                                    e.preventDefault();
-                                                                    handleDestSuggestionSelect(suggestion);
-                                                                }}
-                                                            >
-                                                                {suggestion.label}
-                                                            </button>
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                            )
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {error && <div className="alert">{error}</div>}
-                    {showNearestError && <div className="alert">{nearestError}</div>}
-
-                    {showPlanLoadingCard && (
-                        <div className="result-card block-gap">Planning your trip...</div>
-                    )}
-
-                    {result && (
-                        <>
-                            <ResultCard
-                                className="block-gap"
-                                pickup={result.pickup}
-                                dropoff={result.dropoff}
-                                dWalk1Mi={result.dWalk1Mi}
-                                dBikeMi={result.dBikeMi}
-                                dWalk2Mi={result.dWalk2Mi}
-                            />
-
-                            <a
-                                href={result.link}
-                                target={isMobile ? "_self" : "_blank"}
-                                rel={isMobile ? undefined : "noopener noreferrer"}
-                                className="btn btn--lg btn--block block-gap"
-                            >
-                                Open route in Google Maps
-                            </a>
-                        </>
-                    )}
-
-                    {showNearestLoadingCard && (
-                        <div className="result-card block-gap">Finding the closest station...</div>
-                    )}
-
-                    {showNearestCard && nearestResult && (
-                        <div className="result-card block-gap">
-                            <strong>Nearest station:</strong> {nearestResult.station.name} — bikes: {nearestResult.station.num_bikes_available}
-                            <div className="small">
-                                {nearestResult.station.lat.toFixed(5)}, {nearestResult.station.lon.toFixed(5)} (about {fmtMilesFeet(nearestResult.distanceMi)} away)
-                            </div>
-                            {nearestResult.fallback && (
-                                <div className="small">
-                                    No available bikes nearby; showing the closest station instead.
-                                </div>
-                            )}
-                            <div style={{height: 8}} />
-                            <a
-                                href={nearestResult.link}
-                                target={isMobile ? "_self" : "_blank"}
-                                rel={isMobile ? undefined : "noopener noreferrer"}
-                                className="btn btn--md btn--block"
-                            >
-                                Open route in Google Maps
-                            </a>
-                        </div>
-                    )}
-                    </form>
+                        <PlanActions
+                            result={result}
+                            nearest={nearestResult}
+                            planState={planState}
+                            nearestState={nearestState}
+                            isMobile={isMobile}
+                        />
+                    </section>
                 )}
             </main>
         </div>
@@ -885,7 +552,12 @@ function pickNearestWith(
         .sort((a, b) => a.d - b.d)[0]?.s ?? null;
 }
 
-function ServiceAreaMap({bounds}: {bounds: LatLngBoundsExpression}) {
+function ServiceAreaMap({bounds, stations}: {bounds: LatLngBoundsExpression; stations: Station[]}) {
+    const markers = useMemo(
+        () => stations.map((station) => <StationMarker key={station.station_id} station={station}/>),
+        [stations]
+    );
+
     return (
         <MapContainer
             className="service-area__map"
@@ -903,7 +575,8 @@ function ServiceAreaMap({bounds}: {bounds: LatLngBoundsExpression}) {
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution={OSM_ATTRIBUTION}
             />
-            <Rectangle bounds={bounds} pathOptions={{color: "#0ea5e9", weight: 2}}/>
+            <Rectangle bounds={bounds} pathOptions={{color: "#22c55e", weight: 2}}/>
+            {markers}
         </MapContainer>
     );
 }
