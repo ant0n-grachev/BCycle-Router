@@ -1,18 +1,19 @@
 import React, {useEffect, useMemo, useRef, useState} from "react";
-import type {LatLon, Station} from "./types";
+import type {Station} from "./types";
 import type {GeocodeSuggestion} from "./lib/geocode";
 import {setShowcaseMode} from "./lib/gbfs";
 import {haversineKm, kmToMiles} from "./lib/distance";
-import {buildGMapsMulti} from "./lib/maps";
+import {buildGMapsMulti, buildGMapsWalking} from "./lib/maps";
 import {contains} from "./lib/bounds";
+import {pickNearestStation} from "./lib/stations";
 import {
     AutocompleteField,
     LocationPanel,
-    OriginSection,
+    OriginOptions,
     PlanActions,
     StationMarker,
 } from "./components";
-import type {LocationSection} from "./components";
+import type {LocationSection, NearestData, ResultData} from "./components";
 import {MapContainer, Rectangle, TileLayer, useMap} from "react-leaflet";
 import type {LatLngBoundsExpression} from "leaflet";
 import {
@@ -32,26 +33,11 @@ export default function App() {
     const [originMode, setOriginMode] = useState<"device" | "manual">("manual");
     const originInputRef = useRef<HTMLInputElement | null>(null);
     const destInputRef = useRef<HTMLInputElement | null>(null);
-    const [result, setResult] = useState<null | {
-        pickup: Station;
-        dropoff: Station;
-        link: string;
-        dWalk1Mi: number;
-        dBikeMi: number;
-        dWalk2Mi: number;
-    }>(null);
+    const [result, setResult] = useState<ResultData | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [planLoading, setPlanLoading] = useState(false);
     const [nearestError, setNearestError] = useState<string | null>(null);
-    const [nearestResult, setNearestResult] = useState<
-        | null
-        | {
-              station: Station;
-              distanceMi: number;
-              link: string;
-              fallback: boolean;
-          }
-    >(null);
+    const [nearestResult, setNearestResult] = useState<NearestData | null>(null);
     const [nearestLoading, setNearestLoading] = useState(false);
     const [serviceAreaExpanded, setServiceAreaExpanded] = useState(false);
     const runNearestTask = useLatestAsync();
@@ -116,10 +102,10 @@ export default function App() {
             setShowcaseMode(Boolean(enabled));
             refreshServiceArea();
         }
-        (window as any).bcycleShowcase = showcaseCommand;
+        window.bcycleShowcase = showcaseCommand;
         return () => {
-            if ((window as any).bcycleShowcase === showcaseCommand) {
-                delete (window as any).bcycleShowcase;
+            if (window.bcycleShowcase === showcaseCommand) {
+                delete window.bcycleShowcase;
             }
         };
     }, [refreshServiceArea]);
@@ -136,6 +122,8 @@ export default function App() {
         () => ({loading: destSuggestionSelected && planLoading && !result, error}),
         [destSuggestionSelected, planLoading, result, error]
     );
+    const isNeutralPlanError =
+        planState.error === "Select a destination from the suggestions.";
     const nearestState = useMemo(
         () => ({
             loading: nearestLoading && !destSuggestionSelected && !nearestResult,
@@ -236,14 +224,14 @@ export default function App() {
                     throw new Error(message);
                 }
 
-                let station = pickNearestWith(
+                let station = pickNearestStation(
                     stations,
                     validOrigin,
                     (s) => s.num_bikes_available > 0
                 );
                 let fallback = false;
                 if (!station) {
-                    station = pickNearestWith(stations, validOrigin, () => true);
+                    station = pickNearestStation(stations, validOrigin, () => true);
                     fallback = true;
                 }
                 if (!station) {
@@ -254,13 +242,10 @@ export default function App() {
                     haversineKm(validOrigin, {lat: station.lat, lon: station.lon})
                 );
 
-                const params = new URLSearchParams({
-                    api: "1",
-                    origin: `${validOrigin.lat},${validOrigin.lon}`,
-                    destination: `${station.lat},${station.lon}`,
-                    travelmode: "walking",
+                const link = buildGMapsWalking(validOrigin, {
+                    lat: station.lat,
+                    lon: station.lon,
                 });
-                const link = `https://www.google.com/maps/dir/?${params.toString()}`;
 
                 return {
                     station,
@@ -342,14 +327,14 @@ export default function App() {
                     throw new Error("Destination not found.");
                 }
 
-                const pickup = pickNearestWith(
+                const pickup = pickNearestStation(
                     stations,
                     validOrigin,
                     (s) => s.num_bikes_available > 0
                 );
                 if (!pickup) throw new Error("No nearby stations with bikes available.");
 
-                const dropoff = pickNearestWith(
+                const dropoff = pickNearestStation(
                     stations,
                     ge,
                     (s) => s.num_docks_available > 0,
@@ -432,7 +417,7 @@ export default function App() {
             key: "origin",
             title: "Starting location",
             content: (
-                <OriginSection
+                <OriginOptions
                     mode={originMode}
                     disabled={deviceOptionDisabled}
                     status={originStatusMessage}
@@ -516,7 +501,9 @@ export default function App() {
                         <LocationPanel sections={locationSections}/>
 
                         {planState.error && !planState.loading && (
-                            <div className="alert">{planState.error}</div>
+                            <div className={isNeutralPlanError ? "result-card" : "alert"}>
+                                {planState.error}
+                            </div>
                         )}
 
                         <PlanActions
@@ -531,25 +518,6 @@ export default function App() {
             </main>
         </div>
     );
-}
-
-function pickNearestWith(
-    stations: Station[],
-    origin: LatLon,
-    predicate: (s: Station) => boolean,
-    options?: { requireRenting?: boolean; requireReturning?: boolean }
-): Station | null {
-    const {requireRenting = true, requireReturning = true} = options ?? {};
-    return stations
-        .filter(
-            (s) =>
-                s.is_installed &&
-                (!requireRenting || s.is_renting) &&
-                (!requireReturning || s.is_returning) &&
-                predicate(s)
-        )
-        .map((s) => ({s, d: haversineKm(origin, {lat: s.lat, lon: s.lon})}))
-        .sort((a, b) => a.d - b.d)[0]?.s ?? null;
 }
 
 function ServiceAreaMap({bounds, stations}: {bounds: LatLngBoundsExpression; stations: Station[]}) {

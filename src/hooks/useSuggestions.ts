@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
 import type {GeocodeSuggestion} from "../lib/geocode";
 import {suggestNominatim} from "../lib/geocode";
 import type {Bounds} from "../lib/bounds";
@@ -40,15 +40,23 @@ export function useSuggestions(
         }
 
         setNoResults(false);
+        const controller = new AbortController();
         const handle = window.setTimeout(() => {
-            suggestNominatim(trimmed, {bounds, limit: 5})
+            suggestNominatim(trimmed, {
+                bounds,
+                limit: 5,
+                signal: controller.signal,
+            })
                 .then((next) => {
                     if (seqRef.current === seq) {
                         setSuggestions(next);
                         setNoResults(next.length === 0);
                     }
                 })
-                .catch(() => {
+                .catch((error: unknown) => {
+                    if (error instanceof Error && error.name === "AbortError") {
+                        return;
+                    }
                     if (seqRef.current === seq) {
                         setSuggestions([]);
                         setNoResults(false);
@@ -57,14 +65,15 @@ export function useSuggestions(
         }, 200);
 
         return () => {
+            controller.abort();
             window.clearTimeout(handle);
         };
     }, [query, enabled, bounds, minLength]);
 
-    const clear = () => {
+    const clear = useCallback(() => {
         setSuggestions([]);
         setNoResults(false);
-    };
+    }, []);
 
     return {suggestions, noResults, clear};
 }

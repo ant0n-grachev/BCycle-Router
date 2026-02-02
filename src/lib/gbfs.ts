@@ -1,4 +1,4 @@
-import {Station} from "../types";
+import type {Station} from "../types";
 
 const GBFS_INFO = "https://gbfs.bcycle.com/bcycle_madison/station_information.json";
 const GBFS_STATUS = "https://gbfs.bcycle.com/bcycle_madison/station_status.json";
@@ -15,6 +15,29 @@ const strictCache: CacheEntry = {stations: null, timestamp: 0, pending: null};
 const relaxedCache: CacheEntry = {stations: null, timestamp: 0, pending: null};
 
 let showcaseMode = false;
+
+interface GbfsInfoStation {
+    station_id: string;
+    name?: string;
+    lat: number;
+    lon: number;
+}
+
+interface GbfsStatusStation {
+    station_id: string;
+    name?: string;
+    is_installed: number;
+    is_renting: number;
+    is_returning: number;
+    num_bikes_available: number;
+    num_docks_available: number;
+}
+
+interface GbfsResponse<T> {
+    data?: {
+        stations?: T[];
+    };
+}
 
 export class SeasonClosedError extends Error {
     constructor() {
@@ -33,18 +56,18 @@ export function setShowcaseMode(enabled: boolean) {
     relaxedCache.pending = null;
 }
 
-async function fetchJson(url: string, label: string) {
+async function fetchJson<T>(url: string, label: string): Promise<T> {
     const res = await fetch(url);
     if (!res.ok) {
         throw new Error(`Failed to load ${label} (${res.status})`);
     }
-    return res.json();
+    return res.json() as Promise<T>;
 }
 
 async function fetchStations({allowClosed = false}: {allowClosed?: boolean} = {}): Promise<Station[]> {
     const [infoRes, statusRes] = await Promise.all([
-        fetchJson(GBFS_INFO, "station information"),
-        fetchJson(GBFS_STATUS, "station status"),
+        fetchJson<GbfsResponse<GbfsInfoStation>>(GBFS_INFO, "station information"),
+        fetchJson<GbfsResponse<GbfsStatusStation>>(GBFS_STATUS, "station status"),
     ]);
 
     const infoStations = infoRes?.data?.stations;
@@ -54,12 +77,13 @@ async function fetchStations({allowClosed = false}: {allowClosed?: boolean} = {}
         throw new SeasonClosedError();
     }
 
-    const infoMap: Record<string, any> = {};
+    const infoMap: Record<string, GbfsInfoStation> = {};
     for (const s of infoStations) infoMap[s.station_id] = s;
 
     const stations: Station[] = [];
     for (const st of statusStations) {
-        const base = infoMap[st.station_id] || {};
+        const base = infoMap[st.station_id];
+        if (!base) continue;
         const lat = Number(base.lat);
         const lon = Number(base.lon);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;

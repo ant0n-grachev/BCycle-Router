@@ -1,4 +1,4 @@
-import {LatLon} from "../types";
+import type {LatLon} from "../types";
 import type {Bounds} from "./bounds";
 import {contains} from "./bounds";
 
@@ -15,39 +15,15 @@ export interface GeocodeSuggestion extends LatLon {
     label: string;
 }
 
-
-export async function geocodeNominatim(q: string): Promise<GeocodeSuggestion> {
-    const maybe = parseLatLon(q);
-    if (maybe) {
-        return {...maybe, label: `${maybe.lat.toFixed(5)}, ${maybe.lon.toFixed(5)}`};
-    }
-
-    const url = new URL("https://nominatim.openstreetmap.org/search");
-    url.searchParams.set("q", q);
-    url.searchParams.set("format", "json");
-    url.searchParams.set("limit", "1");
-
-    const res = await fetch(url.toString(), {headers: {Accept: "application/json"}});
-    if (!res.ok) throw new Error("Geocoding request failed.");
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) throw new Error("Destination not found.");
-    const item = data[0];
-    const lat = Number(item.lat);
-    const lon = Number(item.lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        throw new Error("Geocoding returned invalid coordinates.");
-    }
-    return {lat, lon, label: item.display_name as string};
-}
-
 interface SuggestOptions {
     limit?: number;
     bounds?: Bounds | null;
+    signal?: AbortSignal;
 }
 
 export async function suggestNominatim(
     q: string,
-    {limit = 5, bounds}: SuggestOptions = {}
+    {limit = 5, bounds, signal}: SuggestOptions = {}
 ): Promise<GeocodeSuggestion[]> {
     const trimmed = q.trim();
     if (!trimmed) return [];
@@ -72,7 +48,10 @@ export async function suggestNominatim(
         url.searchParams.set("bounded", "1");
     }
 
-    const res = await fetch(url.toString(), {headers: {Accept: "application/json"}});
+    const res = await fetch(url.toString(), {
+        headers: {Accept: "application/json"},
+        signal,
+    });
     if (!res.ok) throw new Error("Geocoding request failed.");
     const data = await res.json();
     if (!Array.isArray(data)) return [];

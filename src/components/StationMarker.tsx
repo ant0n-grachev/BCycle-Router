@@ -7,7 +7,6 @@ export default function StationMarker({station}: {station: Station}) {
     const color = open ? "#3b82f6" : "#dc2626";
     return (
         <CircleMarker
-            key={station.station_id}
             center={[station.lat, station.lon]}
             radius={1}
             pathOptions={{color, fillColor: color, fillOpacity: 1, weight: 1}}

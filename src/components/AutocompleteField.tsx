@@ -9,7 +9,7 @@ interface AutocompleteFieldProps {
     suggestions: GeocodeSuggestion[];
     noResults: boolean;
     onSelect: (suggestion: GeocodeSuggestion) => void;
-    inputRef?: React.RefObject<HTMLInputElement | null>;
+    inputRef?: React.Ref<HTMLInputElement>;
     showClear?: boolean;
     onClear?: () => void;
 }
@@ -32,7 +32,7 @@ export default function AutocompleteField({
     return (
         <div className="autocomplete">
             <input
-                ref={inputRef as React.RefObject<HTMLInputElement>}
+                ref={inputRef}
                 className={`input${showClear ? " input--with-clear" : ""}`}
                 inputMode="search"
                 placeholder={placeholder}

@@ -1,4 +1,4 @@
-import {LatLon} from "../types";
+import type {LatLon} from "../types";
 
 export function haversineKm(a: LatLon, b: LatLon) {
     const R = 6371.0088;

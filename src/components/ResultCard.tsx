@@ -1,5 +1,5 @@
 import React from "react";
-import {Station} from "../types";
+import type {Station} from "../types";
 import {fmtMilesFeet} from "../lib/distance";
 
 interface ResultCardProps {

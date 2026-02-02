@@ -8,9 +8,7 @@ export function registerServiceWorker(): void {
             navigator.serviceWorker
                 .register(`${process.env.PUBLIC_URL}/service-worker.js`)
                 .catch((error) => {
-                    if (process.env.NODE_ENV !== "production") {
-                        console.error("Service worker registration failed:", error);
-                    }
+                    console.error("Service worker registration failed:", error);
                 });
         });
     }

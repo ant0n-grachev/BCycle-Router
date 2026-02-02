@@ -19,9 +19,10 @@ export function useLatestAsync() {
                 handlers.onSuccess?.(result);
             } catch (err) {
                 if (seqRef.current !== requestId) return;
+                const error = err as {message?: unknown} | null;
                 const message =
-                    err && typeof (err as any).message === "string"
-                        ? (err as any).message
+                    error && typeof error.message === "string"
+                        ? error.message
                         : handlers.errorMessage || "Something went wrong.";
                 handlers.onError?.(message);
             } finally {
