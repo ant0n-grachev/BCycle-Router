@@ -46,6 +46,7 @@ export default function App() {
     const {
         data: serviceAreaData,
         seasonClosed,
+        error: serviceAreaError,
         refresh: refreshServiceArea,
         refreshing: serviceAreaRefreshing,
     } = useServiceAreaData();
@@ -201,9 +202,14 @@ export default function App() {
         }
 
         if (!serviceAreaStations || !systemBounds) {
-            setNearestLoading(true);
             setNearestResult(null);
-            setNearestError(null);
+            if (serviceAreaError) {
+                setNearestLoading(false);
+                setNearestError(serviceAreaError);
+            } else {
+                setNearestLoading(true);
+                setNearestError(null);
+            }
             return;
         }
 
@@ -262,6 +268,7 @@ export default function App() {
         );
     }, [
         seasonClosed,
+        serviceAreaError,
         validate,
         originMode,
         serviceAreaStations,
@@ -300,8 +307,11 @@ export default function App() {
         }
 
         if (!serviceAreaStations || !systemBounds) {
-            setPlanLoading(true);
+            setPlanLoading(!serviceAreaError);
             setResult(null);
+            if (serviceAreaError) {
+                setError(serviceAreaError);
+            }
             return;
         }
 
@@ -377,6 +387,7 @@ export default function App() {
         validate,
         validateDestination,
         seasonClosed,
+        serviceAreaError,
         serviceAreaStations,
         systemBounds,
         runPlanTask,
@@ -465,16 +476,14 @@ export default function App() {
                             <div className="service-area__hint">View the current system boundary.</div>
                         </div>
                         <div className="service-area__actions">
-                            {serviceAreaExpanded && (
-                                <button
-                                    type="button"
-                                    className="service-area__toggle"
-                                    onClick={refreshServiceArea}
-                                    disabled={!serviceAreaBounds || serviceAreaRefreshing}
-                                >
-                                    {serviceAreaRefreshing ? "Refreshing..." : "Refresh"}
-                                </button>
-                            )}
+                            <button
+                                type="button"
+                                className="service-area__toggle"
+                                onClick={refreshServiceArea}
+                                disabled={serviceAreaRefreshing}
+                            >
+                                {serviceAreaRefreshing ? "Refreshing..." : "Refresh"}
+                            </button>
                             <button
                                 type="button"
                                 className="service-area__toggle"
@@ -485,6 +494,9 @@ export default function App() {
                             </button>
                         </div>
                     </div>
+                    {serviceAreaError && (
+                        <div className="service-area__error">{serviceAreaError}</div>
+                    )}
                     {serviceAreaExpanded && (
                         <div className="service-area__map-wrapper">
                             {serviceAreaBounds && serviceAreaStations ? (

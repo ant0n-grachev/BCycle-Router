@@ -12,11 +12,13 @@ interface ServiceAreaData {
 export function useServiceAreaData() {
     const [data, setData] = useState<ServiceAreaData | null>(null);
     const [seasonClosed, setSeasonClosed] = useState(false);
+    const [error, setError] = useState<string | null>(null);
     const [refreshToken, setRefreshToken] = useState(0);
     const [refreshing, setRefreshing] = useState(true);
 
     const refresh = useCallback(() => {
         setRefreshing(true);
+        setError(null);
         setRefreshToken((token) => token + 1);
     }, []);
 
@@ -28,23 +30,28 @@ export function useServiceAreaData() {
                 const stations = await loadStations();
                 if (cancelled) return;
                 setSeasonClosed(false);
+                setError(null);
                 update(stations);
             } catch (err) {
                 if (cancelled) return;
                 if (err instanceof SeasonClosedError) {
                     setSeasonClosed(true);
+                    setError(null);
                     try {
                         const stations = await loadStations({allowClosed: true});
                         if (cancelled) return;
+                        setError(null);
                         update(stations);
                     } catch (innerErr) {
                         if (!cancelled) {
                             console.error(innerErr);
                             setData(null);
+                            setError("Unable to load station data right now. Please try again.");
                         }
                     }
                 } else {
                     console.error(err);
+                    setError("Unable to load station data right now. Please try again.");
                 }
             }
             if (!cancelled) {
@@ -69,5 +76,5 @@ export function useServiceAreaData() {
         };
     }, [refreshToken]);
 
-    return {data, seasonClosed, refresh, refreshing};
+    return {data, seasonClosed, error, refresh, refreshing};
 }
