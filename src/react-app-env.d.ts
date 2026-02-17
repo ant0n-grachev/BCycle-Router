@@ -2,5 +2,5 @@
 /// <reference types="leaflet" />
 
 interface Window {
-    bcycleShowcase?: (enabled?: boolean) => void;
+    brouterShowcase?: (enabled?: boolean) => void;
 }

@@ -1,7 +1,7 @@
 {
   "name": "BRouter",
   "short_name": "BRouter",
-  "description": "Plan Madison BCycle rides with optimized pickup and dropoff stations plus Google Maps directions.",
+  "description": "BRouter plans Madison BCycle rides with optimized pickup and dropoff stations plus Google Maps directions.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

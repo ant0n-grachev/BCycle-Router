@@ -1,4 +1,4 @@
-const CACHE_NAME = "bcycle-router-v1";
+const CACHE_NAME = "brouter-v1";
 const PRECACHE_URLS = ["/", "/index.html", "/manifest.json"];
 const OFFLINE_FALLBACK_PAGE = "/index.html";
 

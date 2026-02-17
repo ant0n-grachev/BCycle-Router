@@ -1,6 +1,6 @@
-# 🚲 Madison BCycle Router
+# 🚲 BRouter
 
-Madison BCycle Router is a single-page React application that helps riders plan a seamless bike-share trip across Madison, Wisconsin. The app automatically finds the closest station with an available bike near the rider, locates a dock near the destination, and links out to Google Maps with the combined walking and biking directions.
+BRouter is a single-page React application that helps riders plan a seamless bike-share trip across Madison, Wisconsin. The app automatically finds the closest station with an available bike near the rider, locates a dock near the destination, and links out to Google Maps with the combined walking and biking directions.
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/c60c2578-a7bd-4398-b685-d9bcca81db23"
@@ -31,7 +31,7 @@ Madison BCycle Router is a single-page React application that helps riders plan 
    npm start
    ```
 3. Open `http://localhost:3000` in a browser that supports the Geolocation API. Allow location access when prompted to see nearby stations.
-4. For testing, run `bcycleShowcase()` in the browser console to simulate every station having bikes/docks; refresh to return to live data.
+4. For testing, run `brouterShowcase()` in the browser console to simulate every station having bikes/docks; refresh to return to live data.
 
 ## Data sources
 - [Madison BCycle GBFS](https://gbfs.bcycle.com/bcycle_madison/station_information.json): real-time station information and availability.

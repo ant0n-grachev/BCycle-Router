@@ -102,10 +102,10 @@ export default function App() {
             setShowcaseMode(Boolean(enabled));
             refreshServiceArea();
         }
-        window.bcycleShowcase = showcaseCommand;
+        window.brouterShowcase = showcaseCommand;
         return () => {
-            if (window.bcycleShowcase === showcaseCommand) {
-                delete window.bcycleShowcase;
+            if (window.brouterShowcase === showcaseCommand) {
+                delete window.brouterShowcase;
             }
         };
     }, [refreshServiceArea]);
@@ -440,7 +440,7 @@ export default function App() {
             <main className="card">
                 <header className="title">
                     <h1 className="title-line">
-                        <span className="title-main">🚲 Madison BCycle Router</span>
+                        <span className="title-main">🚲 Madison's BRouter</span>
                         <a
                             className="title-by"
                             href="https://anton.grachev.us"
