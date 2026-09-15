@@ -8,6 +8,7 @@
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@tomickigrzegorz/leaflet-rotate": "0.2.4",
     "leaflet": "^1.9.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

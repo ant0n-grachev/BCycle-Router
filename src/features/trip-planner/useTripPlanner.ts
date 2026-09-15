@@ -81,11 +81,17 @@ export function useTripPlanner(stations: Station[]) {
   const [lastDeviceValidationKey, setLastDeviceValidationKey] = useState<string | null>(null);
   const [manualOrigin, setManualOriginState] = useState<LatLon | null>(null);
   const [destination, setDestinationState] = useState<TripDestination | null>(null);
+  const [originText, setOriginText] = useState('');
+  const [destinationText, setDestinationText] = useState('');
+  const [originSearchKey, setOriginSearchKey] = useState(0);
+  const [destinationSearchKey, setDestinationSearchKey] = useState(0);
   const [selectedPickupId, selectPickup] = useState<string | null>(null);
   const [selectedDropoffId, selectDropoff] = useState<string | null>(null);
   const serviceArea = useMemo(() => computeStationServiceArea(stations), [stations]);
 
   const setManualOrigin = useCallback((nextOrigin: LatLon | null) => {
+    setOriginModeState('manual');
+    setOriginModeNotice(null);
     setManualOriginState(nextOrigin);
     selectPickup(null);
     selectDropoff(null);
@@ -104,6 +110,7 @@ export function useTripPlanner(stations: Station[]) {
       const fallbackNotice = deviceLocationFallbackNotice(serviceArea, location);
       if (fallbackNotice) {
         setOriginModeState('manual');
+        setOriginText('');
         setOriginModeNotice(fallbackNotice);
       }
     },
@@ -113,6 +120,7 @@ export function useTripPlanner(stations: Station[]) {
     enabled: originMode === 'device',
     onLocation: handleDeviceLocation,
   });
+  const retryDeviceLocation = deviceLocation.retry;
 
   if (originMode === 'device' && deviceLocation.location) {
     const validationKey = deviceLocationValidationKey(serviceArea, deviceLocation.location);
@@ -121,6 +129,7 @@ export function useTripPlanner(stations: Station[]) {
       const fallbackNotice = deviceLocationFallbackNotice(serviceArea, deviceLocation.location);
       if (fallbackNotice) {
         setOriginModeState('manual');
+        setOriginText('');
         setOriginModeNotice(fallbackNotice);
       }
     }
@@ -129,6 +138,31 @@ export function useTripPlanner(stations: Station[]) {
   const setOriginMode = useCallback((mode: OriginMode) => {
     setOriginModeNotice(null);
     setOriginModeState(mode);
+    selectPickup(null);
+    selectDropoff(null);
+  }, []);
+
+  const useCurrentLocation = useCallback(() => {
+    setOriginModeNotice(null);
+    setManualOriginState(null);
+    setOriginModeState('device');
+    setOriginText('My location');
+    setOriginSearchKey((key) => key + 1);
+    selectPickup(null);
+    selectDropoff(null);
+    if (originMode === 'device') retryDeviceLocation();
+  }, [retryDeviceLocation, originMode]);
+
+  const clear = useCallback(() => {
+    setOriginModeState('manual');
+    setOriginModeNotice(null);
+    setLastDeviceValidationKey(null);
+    setManualOriginState(null);
+    setDestinationState(null);
+    setOriginText('');
+    setDestinationText('');
+    setOriginSearchKey((key) => key + 1);
+    setDestinationSearchKey((key) => key + 1);
     selectPickup(null);
     selectDropoff(null);
   }, []);
@@ -163,6 +197,14 @@ export function useTripPlanner(stations: Station[]) {
   return {
     originMode,
     setOriginMode,
+    useCurrentLocation,
+    clear,
+    originText,
+    setOriginText,
+    destinationText,
+    setDestinationText,
+    originSearchKey,
+    destinationSearchKey,
     originModeNotice,
     serviceArea,
     manualOrigin,

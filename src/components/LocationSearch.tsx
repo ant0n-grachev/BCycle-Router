@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import type { FormEvent, KeyboardEvent, MouseEvent } from 'react';
+import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { StationServiceArea } from '../lib/coverage';
 import {
   createGeocodingClient,
@@ -59,6 +59,10 @@ interface LocationSearchProps {
   search?: GeocodingClient['search'];
   searchAfterPause?: boolean;
   serviceArea?: StationServiceArea | null;
+  value?: string;
+  onValueChange?: (value: string) => void;
+  onInputChange?: () => void;
+  inputAction?: ReactNode;
 }
 
 export default function LocationSearch({
@@ -67,6 +71,10 @@ export default function LocationSearch({
   search = defaultSearch,
   searchAfterPause = false,
   serviceArea,
+  value: controlledValue,
+  onValueChange,
+  onInputChange,
+  inputAction,
 }: LocationSearchProps) {
   const generatedId = useId();
   const inputId = `${generatedId}-input`;
@@ -78,7 +86,12 @@ export default function LocationSearch({
   const requestSequence = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const scheduledSearchRef = useRef<ReturnType<typeof globalThis.setTimeout> | null>(null);
-  const [value, setValue] = useState('');
+  const [internalValue, setInternalValue] = useState('');
+  const value = controlledValue ?? internalValue;
+  function setValue(next: string): void {
+    setInternalValue(next);
+    onValueChange?.(next);
+  }
   const [selection, setSelection] = useState<GeocodeSuggestion | null>(null);
   const [transientServiceAreaKey, setTransientServiceAreaKey] = useState(serviceAreaKey);
   const [results, setResults] = useState<readonly GeocodeSuggestion[]>([]);
@@ -135,6 +148,7 @@ export default function LocationSearch({
   }
 
   function handleChange(next: string): void {
+    onInputChange?.();
     if (scheduledSearchRef.current !== null) {
       globalThis.clearTimeout(scheduledSearchRef.current);
       scheduledSearchRef.current = null;
@@ -304,7 +318,7 @@ export default function LocationSearch({
       </label>
       <div
         className={
-          searchAfterPause
+          searchAfterPause && !inputAction
             ? 'location-search__controls location-search__controls--automatic'
             : 'location-search__controls'
         }
@@ -367,6 +381,7 @@ export default function LocationSearch({
             </ul>
           ) : null}
         </div>
+        {inputAction}
         {searchAfterPause ? null : (
           <button
             className="button button--primary location-search__submit"

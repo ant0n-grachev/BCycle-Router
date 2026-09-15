@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { afterEach, vi } from 'vitest';
 import { GeocodingClientError } from '../services/geocodingClient';
-import type { GeocodingSearchOutcome } from '../services/geocodingClient';
+import { useState } from 'react';
+import type { GeocodingClient, GeocodingSearchOutcome } from '../services/geocodingClient';
 import LocationSearch from './LocationSearch';
 
 const suggestions = [
@@ -47,6 +48,64 @@ function renderSearch(search = vi.fn().mockResolvedValue({ kind: 'results', sugg
 }
 
 describe('LocationSearch', () => {
+  it('supports a device-origin display value without losing the first typed edit', () => {
+    const onInputChange = vi.fn();
+    function ControlledSearch() {
+      const [value, setValue] = useState('My location');
+      return (
+        <LocationSearch
+          label="Starting location"
+          value={value}
+          onValueChange={setValue}
+          onInputChange={onInputChange}
+          onSelectionChange={vi.fn()}
+        />
+      );
+    }
+    render(<ControlledSearch />);
+    const input = screen.getByRole('combobox', { name: 'Starting location' });
+    expect(input).toHaveValue('My location');
+    fireEvent.change(input, { target: { value: 'Entered address' } });
+    expect(input).toHaveValue('Entered address');
+    expect(onInputChange).toHaveBeenCalledOnce();
+  });
+
+  it('aborts pending autocomplete and ignores its response when the planner resets the field', async () => {
+    const request = deferred<GeocodingSearchOutcome>();
+    const search = vi.fn<GeocodingClient['search']>().mockReturnValue(request.promise);
+    const onSelectionChange = vi.fn();
+    const { rerender } = render(
+      <LocationSearch
+        key={0}
+        label="Starting location"
+        search={search}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    fireEvent.change(screen.getByRole('combobox', { name: 'Starting location' }), {
+      target: { value: 'State Street' },
+    });
+    fireEvent.submit(screen.getByRole('combobox', { name: 'Starting location' }).closest('form')!);
+    const signal = search.mock.calls[0]?.[1]?.signal as AbortSignal;
+
+    rerender(
+      <LocationSearch
+        key={1}
+        label="Starting location"
+        search={search}
+        onSelectionChange={onSelectionChange}
+      />,
+    );
+    expect(signal.aborted).toBe(true);
+    await act(async () => {
+      request.resolve({ kind: 'results', suggestions });
+      await request.promise;
+    });
+    expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue('');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    expect(onSelectionChange).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     vi.useRealTimers();
   });

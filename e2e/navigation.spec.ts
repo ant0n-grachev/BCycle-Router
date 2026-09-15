@@ -313,7 +313,7 @@ async function prepareNavigationNetwork(page: Page) {
 async function enterOrigin(page: Page, locationMode: 'device' | 'manual'): Promise<void> {
   await loadReadyApp(page);
   if (locationMode === 'device') {
-    await page.getByRole('radio', { name: 'My location' }).check();
+    await page.getByRole('button', { name: 'Use my location', exact: true }).click();
     await expect(page.getByRole('group', { name: 'Pickup station' })).toBeVisible();
   } else {
     await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
@@ -416,6 +416,7 @@ async function expectNoLiveLocation(page: Page, navigation: Locator): Promise<vo
   await expect(navigation.locator('.navigation-location-marker')).toHaveCount(0);
   await expect(navigation.getByRole('button', { name: 'Follow my location' })).toHaveCount(0);
   await expect(navigation.getByRole('button', { name: 'Use my location' })).toHaveCount(0);
+  await expectMapBearing(navigation, 0);
   await expect
     .poll(() => page.evaluate(() => window.__brouterNavigationTest.getSensorActivity()))
     .toEqual({
@@ -424,6 +425,41 @@ async function expectNoLiveLocation(page: Page, navigation: Locator): Promise<vo
       orientationListeners: 0,
       positionWatches: 0,
     });
+}
+
+async function renderedRotation(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+    return ((Math.atan2(matrix.b, matrix.a) * 180) / Math.PI + 360) % 360;
+  });
+}
+
+async function expectMapBearing(navigation: Locator, degrees: number): Promise<void> {
+  await expect
+    .poll(async () => {
+      const rotatedPane = navigation.locator('.leaflet-rotate-pane');
+      const actual = await renderedRotation(
+        (await rotatedPane.count()) ? rotatedPane : navigation.locator('.leaflet-map-pane'),
+      );
+      return Math.abs(((actual - degrees + 540) % 360) - 180);
+    })
+    .toBeLessThan(1);
+}
+
+async function expectArrowFacingUp(navigation: Locator): Promise<void> {
+  await expect
+    .poll(() =>
+      navigation.locator('.navigation-location-marker__heading').evaluate((element) => {
+        let rotation = 0;
+        for (let current: Element | null = element; current; current = current.parentElement) {
+          const matrix = new DOMMatrixReadOnly(getComputedStyle(current).transform);
+          rotation += (Math.atan2(matrix.b, matrix.a) * 180) / Math.PI;
+          if (current.classList.contains('navigation-map__leaflet')) break;
+        }
+        return Math.abs((((rotation % 360) + 540) % 360) - 180);
+      }),
+    )
+    .toBeLessThan(1);
 }
 
 async function markerDistanceFromMapCenter(navigation: Locator): Promise<number> {
@@ -543,7 +579,7 @@ test('reframes a manually selected leg after the rider drags the map without GPS
   ).toBeInViewport();
 });
 
-test('follows a granted location and turns the compass marker with absolute heading changes', async ({
+test('turns the map toward the compass in follow mode and restores a north-up overview', async ({
   page,
 }, testInfo) => {
   await prepareNavigationNetwork(page);
@@ -557,13 +593,18 @@ test('follows a granted location and turns the compass marker with absolute head
   await expect(markerHeading).toHaveAttribute('data-heading-source', 'gps');
   await expect(markerHeading.locator('.navigation-location-marker__arrow')).toBeVisible();
   await expect(markerHeading.locator('.navigation-location-marker__cone')).toBeVisible();
+  await expectMapBearing(navigation, 0);
 
   await follow.click();
   await expect(follow).toHaveAttribute('aria-pressed', 'true');
+  await expectMapBearing(navigation, 325);
+  await expectArrowFacingUp(navigation);
   await page.waitForTimeout(0);
   await setCompassHeading(page, 90);
   await expect(markerHeading).toHaveAttribute('data-heading', '90');
   await expect(markerHeading).toHaveAttribute('data-heading-source', 'compass');
+  await expectMapBearing(navigation, 270);
+  await expectArrowFacingUp(navigation);
   await expect.poll(() => markerDistanceFromMapCenter(navigation)).toBeLessThanOrEqual(5);
   if (testInfo.project.name === 'chromium') {
     await page.screenshot({ path: '/tmp/brouter-compass-desktop.png', fullPage: true });
@@ -572,7 +613,14 @@ test('follows a granted location and turns the compass marker with absolute head
   }
   await setCompassHeading(page, 250);
   await expect(markerHeading).toHaveAttribute('data-heading', '250');
-  await expect(markerHeading).toHaveAttribute('style', /rotate\(250deg\)/);
+  await expectMapBearing(navigation, 110);
+  await expectArrowFacingUp(navigation);
+
+  await setCompassHeading(page, 350);
+  await expectMapBearing(navigation, 10);
+  await setCompassHeading(page, 10);
+  await expectMapBearing(navigation, 350);
+  await expectArrowFacingUp(navigation);
 
   const map = navigation.locator('.navigation-map__leaflet');
   const bounds = await map.boundingBox();
@@ -585,10 +633,23 @@ test('follows a granted location and turns the compass marker with absolute head
   await page.mouse.move(dragX - Math.min(120, bounds.width / 4), dragY, { steps: 4 });
   await page.mouse.up();
   await expect(follow).toHaveAttribute('aria-pressed', 'false');
+  const pausedBearing = await renderedRotation(navigation.locator('.leaflet-rotate-pane'));
+  await setCompassHeading(page, 120);
+  await expect(markerHeading).toHaveAttribute('data-heading', '120');
+  await expectMapBearing(navigation, pausedBearing);
   await follow.click();
   await expect(follow).toHaveAttribute('aria-pressed', 'true');
+  await expectMapBearing(navigation, 240);
+  await expectArrowFacingUp(navigation);
   await expect.poll(() => markerDistanceFromMapCenter(navigation)).toBeLessThanOrEqual(5);
   await expect(navigation.locator('.navigation-location-marker')).toBeInViewport();
+
+  await navigation.getByRole('button', { name: 'Show route' }).click();
+  await expectMapBearing(navigation, 0);
+  await expect(follow).toHaveAttribute('aria-pressed', 'false');
+  await setCompassHeading(page, 215);
+  await expect(markerHeading).toHaveAttribute('data-heading', '215');
+  await expectMapBearing(navigation, 0);
 });
 
 test('opening BCycle and returning, hiding, or reloading never changes the selected leg', async ({

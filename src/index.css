@@ -479,7 +479,6 @@ a:hover {
   gap: 1rem;
 }
 
-.origin-mode,
 .station-choice {
   min-width: 0;
   margin: 0;
@@ -487,32 +486,12 @@ a:hover {
   border: 0;
 }
 
-.origin-mode legend,
 .station-choice legend,
 .location-search__label {
   margin-bottom: 0.55rem;
   font-weight: 800;
 }
 
-.origin-mode {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.25rem;
-}
-
-.origin-mode legend {
-  width: 100%;
-}
-
-.origin-mode label {
-  display: inline-flex;
-  min-height: 2.75rem;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-}
-
-.origin-mode input,
 .station-choice input {
   width: 1.15rem;
   height: 1.15rem;
@@ -538,6 +517,29 @@ a:hover {
 
 .location-search__controls--automatic {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.location-search__device {
+  width: 2.75rem;
+  min-width: 2.75rem;
+  height: 2.75rem;
+  padding: 0.6rem;
+}
+
+.location-search__device svg {
+  width: 1.4rem;
+  height: 1.4rem;
+}
+
+.trip-planner__clear {
+  justify-self: start;
+  min-height: 2.75rem;
+  padding: 0.35rem 0.1rem;
+  color: var(--primary);
+  background: transparent;
+  border: 0;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .location-search__combobox {
@@ -774,7 +776,7 @@ a:hover {
     min-width: 2.25rem;
   }
 
-  .location-search__controls {
+  .location-search__controls:has(.location-search__submit) {
     grid-template-columns: 1fr;
   }
 

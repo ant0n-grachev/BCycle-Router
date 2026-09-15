@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
-import { divIcon, latLng, point, type LatLngTuple } from 'leaflet';
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { divIcon, latLng, Map as LeafletMap, point, type LatLngTuple } from 'leaflet';
 import {
   Circle,
   CircleMarker,
@@ -14,11 +14,21 @@ import {
   ZoomControl,
 } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import '@tomickigrzegorz/leaflet-rotate';
 import { getStationMapState, type StationMapStateName } from '../../components/stationMapState';
 import type { LatLon, Station } from '../../types';
 import type { LocationFix } from './navigationLocation';
 import type { RoutedPath } from './routingTypes';
 import NavigationIcon from './NavigationIcon';
+import {
+  mapBearingTarget,
+  normalizeBearing,
+  resolveNavigationHeading,
+  type CameraMode,
+} from './navigationBearing';
+
+// Preserve ordinary Leaflet gestures on other maps after this lazy module loads.
+LeafletMap.mergeOptions({ dragRotate: false, preventPageGestures: false });
 
 interface NavigationMapProps {
   route: RoutedPath | null;
@@ -43,23 +53,56 @@ const stationStateColors: Record<StationMapStateName, string> = {
   disabled: '#475569',
 };
 
-type CameraMode = 'overview' | 'follow' | 'free';
-
 function Camera({
   route,
   fix,
   mode,
   revision,
   onDrag,
+  heading,
+  locationEnabled,
+  onBearingChange,
 }: {
   route: RoutedPath | null;
   fix: LocationFix | null;
   mode: CameraMode;
   revision: number;
   onDrag: () => void;
+  heading: number | null;
+  locationEnabled: boolean;
+  onBearingChange: (bearing: number) => void;
 }) {
   const map = useMap();
-  useMapEvents({ dragstart: onDrag });
+  const movingRef = useRef(false);
+  useMapEvents({
+    dragstart: () => {
+      map.stopHeadingUp();
+      onDrag();
+    },
+    rotate: () => onBearingChange(map.getBearing()),
+    movestart: () => {
+      movingRef.current = true;
+      map.stopHeadingUp();
+    },
+    moveend: () => {
+      movingRef.current = false;
+      if (mode === 'follow' && locationEnabled && heading !== null) {
+        map.setHeading(heading, { ease: 0.25, deadzone: 0.3 });
+      }
+    },
+  });
+  const bearingTarget = mapBearingTarget(mode, locationEnabled, heading);
+  useEffect(() => {
+    if (mode === 'follow' && locationEnabled && heading !== null) {
+      if (!movingRef.current) map.setHeading(heading, { ease: 0.25, deadzone: 0.3 });
+    } else {
+      map.stopHeadingUp();
+      if (bearingTarget !== null) map.setBearing(bearingTarget);
+    }
+    return () => {
+      map.stopHeadingUp();
+    };
+  }, [map, mode, locationEnabled, heading, bearingTarget, revision]);
   const showRoute = mode === 'overview' || (mode === 'follow' && !fix);
   useEffect(() => {
     if (showRoute && route && route.geometry.length > 1)
@@ -80,6 +123,8 @@ function Camera({
         18,
         map.getBoundsZoom(position.toBounds(Math.max(20, fix.accuracy * 2)), false, point(80, 160)),
       );
+      // The rotation adapter commits pan offsets, so rotate only after the pan settles.
+      map.stopHeadingUp();
       map.setView(position, zoom, { animate: true, duration: 0.35 });
     }
   }, [mode, fix, map, revision]);
@@ -103,35 +148,37 @@ export default function NavigationMap({
 }: NavigationMapProps) {
   const [mode, setMode] = useState<CameraMode>('overview');
   const [revision, moveCamera] = useReducer((value: number) => value + 1, 0);
+  const [bearing, setBearing] = useState(0);
   const displayedFix = locationEnabled ? fix : null;
   const displayedHeading = locationEnabled ? heading : null;
+  const direction = resolveNavigationHeading(displayedHeading, displayedFix?.heading);
+  const cameraMode = !locationEnabled && mode === 'follow' ? 'overview' : mode;
   const positions = useMemo<LatLngTuple[]>(
     () => route?.geometry.map((point) => [point.lat, point.lon]) ?? [],
     [route],
   );
   const markerIcon = useMemo(() => {
-    const direction = displayedHeading ?? displayedFix?.heading;
-    const rotation =
-      typeof direction === 'number' &&
-      Number.isFinite(direction) &&
-      direction >= 0 &&
-      direction < 360
-        ? direction
-        : null;
-    const source = rotation === null ? 'none' : displayedHeading !== null ? 'compass' : 'gps';
+    const rotation = direction.heading;
+    const screenHeading = rotation === null ? null : normalizeBearing(rotation + bearing);
+    const source = direction.source;
     const shape =
       rotation === null
         ? '<circle cx="12" cy="12" r="5" fill="currentColor" />'
         : '<path d="m12 2 8 19-8-4-8 4Z" fill="currentColor" />';
     return divIcon({
       className: 'navigation-location-marker',
-      html: `<div class="navigation-location-marker__heading" data-heading="${rotation ?? ''}" data-heading-source="${source}" style="transform:rotate(${rotation ?? 0}deg)">${rotation === null ? '' : '<span class="navigation-location-marker__cone" aria-hidden="true"></span>'}<div class="navigation-location-marker__point"><svg class="navigation-location-marker__${rotation === null ? 'dot' : 'arrow'}" viewBox="0 0 24 24" aria-hidden="true">${shape}</svg></div></div>`,
+      html: `<div class="navigation-location-marker__heading" data-heading="${rotation ?? ''}" data-screen-heading="${screenHeading ?? ''}" data-heading-source="${source}" style="transform:rotate(${screenHeading ?? 0}deg)">${rotation === null ? '' : '<span class="navigation-location-marker__cone" aria-hidden="true"></span>'}<div class="navigation-location-marker__point"><svg class="navigation-location-marker__${rotation === null ? 'dot' : 'arrow'}" viewBox="0 0 24 24" aria-hidden="true">${shape}</svg></div></div>`,
       iconSize: [34, 34],
       iconAnchor: [17, 17],
     });
-  }, [displayedFix?.heading, displayedHeading]);
+  }, [direction.heading, direction.source, bearing]);
   return (
-    <div className="navigation-map" role="region" aria-label="Navigation map">
+    <div
+      className="navigation-map"
+      role="region"
+      aria-label="Navigation map"
+      data-bearing={bearing}
+    >
       <MapContainer
         center={[target.lat, target.lon]}
         zoom={15}
@@ -140,11 +187,21 @@ export default function NavigationMap({
         className="navigation-map__leaflet"
         keyboard
         scrollWheelZoom
+        rotate
+        bearing={0}
+        rotateControl={false}
+        touchRotate={false}
+        dragRotate={false}
+        shiftKeyRotate={false}
+        preventPageGestures={false}
       >
         <Camera
           route={route}
           fix={displayedFix}
-          mode={mode}
+          mode={cameraMode}
+          heading={direction.heading}
+          locationEnabled={locationEnabled}
+          onBearingChange={setBearing}
           revision={revision}
           onDrag={() => setMode('free')}
         />

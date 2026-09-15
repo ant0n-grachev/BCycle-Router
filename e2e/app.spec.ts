@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Route } from '@playwright/test';
 import {
   DESTINATION_COORDINATES,
   loadReadyApp,
@@ -7,6 +7,12 @@ import {
   ORIGIN_COORDINATES,
   resolveCoordinates,
 } from './fixtures';
+
+declare global {
+  interface Window {
+    __completePlannerLocation?: () => boolean;
+  }
+}
 
 test('loads cleanly without console errors or a framework overlay', async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
@@ -67,9 +73,11 @@ test('uses concise map, search, and attribution copy', async ({ page }) => {
     );
   }
   await expect(page.locator('.app-header .eyebrow, .app-header .app-subtitle')).toHaveCount(0);
-  await expect(page.locator('.origin-mode legend')).toHaveClass(/visually-hidden/);
-  await expect(page.getByRole('radio', { name: 'Enter address' })).toBeChecked();
-  await expect(page.getByRole('radio', { name: 'My location' })).not.toBeChecked();
+  await expect(page.getByRole('heading', { name: 'Where are you going?' })).toHaveCount(0);
+  await expect(page.locator('input[name="origin-mode"]')).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use my location', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clear', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Refresh station data' })).toHaveCount(0);
   await expect(page.getByText(/Last successful refresh:/)).toHaveCount(0);
   await expect(page.getByText('Based on station locations;', { exact: false })).toHaveCount(0);
@@ -389,14 +397,133 @@ test('uses mocked device geolocation without switching to manual mode', async ({
   await mockAppNetwork(page);
   await loadReadyApp(page);
 
-  await page.getByRole('radio', { name: 'My location' }).check();
+  await page.getByRole('button', { name: 'Use my location', exact: true }).click();
 
   await expect(page.getByText(/Device location received:/)).toHaveCount(0);
-  await expect(page.getByRole('radio', { name: 'My location' })).toBeChecked();
+  await expect(page.getByRole('combobox', { name: 'Starting location' })).toHaveValue(
+    'My location',
+  );
   await expect(page.getByRole('group', { name: 'Pickup station' })).toBeVisible();
 
   await resolveCoordinates(page, 'Destination', DESTINATION_COORDINATES);
   await expect(page.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
+});
+
+test('uses a typed starting address as manual origin after device location', async ({
+  context,
+  page,
+}) => {
+  await context.grantPermissions(['geolocation'], { origin: 'http://127.0.0.1:4173' });
+  await context.setGeolocation({ latitude: 43.074, longitude: -89.3997 });
+  await mockAppNetwork(page);
+  await page.route('**/.netlify/functions/route', (route) =>
+    route.fulfill({
+      json: {
+        geometry: [
+          { lat: 43.0731, lon: -89.4012 },
+          { lat: 43.0732, lon: -89.4011 },
+        ],
+        instructions: [],
+        distanceMeters: 100,
+        durationSeconds: 60,
+      },
+    }),
+  );
+  await loadReadyApp(page);
+  await page.getByRole('button', { name: 'Use my location', exact: true }).click();
+  const origin = page.getByRole('combobox', { name: 'Starting location' });
+  await expect(origin).toHaveValue('My location');
+  await expect(page.getByRole('group', { name: 'Pickup station' })).toBeVisible();
+  await resolveCoordinates(page, 'Destination', DESTINATION_COORDINATES);
+
+  await origin.fill('Capitol Square');
+  await page.getByRole('option', { name: 'Capitol Square, Madison, Wisconsin' }).click();
+  await expect(origin).toHaveValue('Capitol Square, Madison, Wisconsin');
+  await page.getByRole('button', { name: 'Go to navigation' }).click();
+  await expect(page.getByRole('main', { name: 'Trip navigation' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Route overview' })).toBeVisible();
+  const saved: unknown = await page.evaluate(() => {
+    const journey: unknown = JSON.parse(localStorage.getItem('brouter:journey:v1') ?? 'null');
+    return journey;
+  });
+  expect(saved).toMatchObject({ locationMode: 'manual', origin: { lat: 43.0731, lon: -89.4012 } });
+});
+
+test('Clear empties both fields and trip selections and ignores a late device result', async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    let callback: PositionCallback | null = null;
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition(success: PositionCallback) {
+          callback = success;
+        },
+      },
+    });
+    window.__completePlannerLocation = () => {
+      if (!callback) return false;
+      callback({
+        coords: {
+          latitude: 43.074,
+          longitude: -89.3997,
+          accuracy: 5,
+          altitude: null,
+          altitudeAccuracy: null,
+          heading: null,
+          speed: null,
+        },
+        timestamp: Date.now(),
+      } as GeolocationPosition);
+      return true;
+    };
+  });
+  await mockAppNetwork(page);
+  await loadReadyApp(page);
+  await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
+  await resolveCoordinates(page, 'Destination', DESTINATION_COORDINATES);
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Use my location', exact: true }).click();
+  await expect(page.getByRole('combobox', { name: 'Starting location' })).toHaveValue(
+    'My location',
+  );
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  expect(await page.evaluate(() => window.__completePlannerLocation?.())).toBe(true);
+  await expect(page.getByRole('combobox', { name: 'Starting location' })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Destination' })).toHaveValue('');
+  await expect(page.getByRole('group', { name: 'Pickup station' })).toHaveCount(0);
+  await expect(page.getByRole('group', { name: 'Drop-off station' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Navigate to pickup' })).toHaveCount(0);
+});
+
+test('Clear cancels a pending starting-address search and empties the destination', async ({
+  page,
+}) => {
+  await mockAppNetwork(page);
+  let pendingSearch: Route | undefined;
+  let searchCancelled = false;
+  await page.route('https://photon.komoot.io/api*', (route) => {
+    pendingSearch = route;
+  });
+  page.on('requestfailed', (request) => {
+    if (request.url().startsWith('https://photon.komoot.io/api')) searchCancelled = true;
+  });
+  await loadReadyApp(page);
+  await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
+  await resolveCoordinates(page, 'Destination', DESTINATION_COORDINATES);
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Starting location' }).fill('Deferred Capitol');
+  await expect.poll(() => Boolean(pendingSearch)).toBe(true);
+
+  await page.getByRole('button', { name: 'Clear', exact: true }).click();
+  await expect.poll(() => searchCancelled).toBe(true);
+  await expect(page.getByRole('combobox', { name: 'Starting location' })).toHaveValue('');
+  await expect(page.getByRole('combobox', { name: 'Destination' })).toHaveValue('');
+  await expect(page.getByRole('option')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toHaveCount(0);
 });
 
 test('switches an out-of-area device location to manual origin entry', async ({
@@ -410,9 +537,8 @@ test('switches an out-of-area device location to manual origin entry', async ({
   await mockAppNetwork(page);
   await loadReadyApp(page);
 
-  await page.getByRole('radio', { name: 'My location' }).click();
+  await page.getByRole('button', { name: 'Use my location', exact: true }).click();
 
-  await expect(page.getByRole('radio', { name: 'Enter address' })).toBeChecked();
   await expect(page.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
   await expect(
     page.getByText(

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentProps } from 'react';
 import { vi } from 'vitest';
@@ -52,11 +52,14 @@ function Harness({
 }: Pick<ComponentProps<typeof TripPlanner>, 'onStartNavigation' | 'onStartPickupNavigation'> = {}) {
   const controller = useTripPlanner(stations);
   return (
-    <TripPlanner
-      controller={controller}
-      onStartNavigation={onStartNavigation}
-      onStartPickupNavigation={onStartPickupNavigation}
-    />
+    <>
+      <TripPlanner
+        controller={controller}
+        onStartNavigation={onStartNavigation}
+        onStartPickupNavigation={onStartPickupNavigation}
+      />
+      <output aria-label="Origin source">{controller.originMode}</output>
+    </>
   );
 }
 
@@ -78,6 +81,110 @@ function RefreshingHarness({ currentStations }: { currentStations: Station[] }) 
 }
 
 describe('TripPlanner', () => {
+  let geolocationDescriptor: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    geolocationDescriptor = Object.getOwnPropertyDescriptor(navigator, 'geolocation');
+  });
+  afterEach(() => {
+    if (geolocationDescriptor)
+      Object.defineProperty(navigator, 'geolocation', geolocationDescriptor);
+    else Reflect.deleteProperty(navigator, 'geolocation');
+  });
+  it('clears both fields, station selections and a resolved trip', async () => {
+    const user = userEvent.setup();
+    render(<Harness onStartNavigation={vi.fn()} />);
+    await user.type(
+      screen.getByRole('combobox', { name: 'Starting location' }),
+      '43.07310, -89.40120{Enter}',
+    );
+    await user.type(
+      screen.getByRole('combobox', { name: 'Destination' }),
+      '43.07520, -89.39820{Enter}',
+    );
+    expect(await screen.findByRole('button', { name: 'Go to navigation' })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+
+    expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue('');
+    expect(screen.getByRole('combobox', { name: 'Destination' })).toHaveValue('');
+    expect(screen.queryByRole('group', { name: 'Pickup station' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Drop-off station' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Go to navigation' })).not.toBeInTheDocument();
+  });
+
+  it('uses the device button and switches to manual as soon as the starting field is edited', async () => {
+    const user = userEvent.setup();
+    const originalGeolocation = navigator.geolocation;
+    let success!: PositionCallback;
+    const getCurrentPosition = vi.fn((next: PositionCallback) => {
+      success = next;
+    });
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: { getCurrentPosition },
+    });
+    render(<Harness onStartPickupNavigation={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
+    act(() =>
+      success({ coords: { latitude: 43.0731, longitude: -89.4012 } } as GeolocationPosition),
+    );
+
+    expect(screen.getByRole('status', { name: 'Origin source' })).toHaveTextContent('device');
+    expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue('My location');
+    expect(screen.getByRole('button', { name: 'Navigate to pickup' })).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Starting location' }), {
+      target: { value: 'New address' },
+    });
+    expect(screen.getByRole('status', { name: 'Origin source' })).toHaveTextContent('manual');
+    expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue('New address');
+    expect(screen.queryByRole('button', { name: 'Navigate to pickup' })).not.toBeInTheDocument();
+    expect(getCurrentPosition).toHaveBeenCalledTimes(1);
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: originalGeolocation,
+    });
+  });
+
+  it('ignores a device location response after Clear or manual typing', async () => {
+    const user = userEvent.setup();
+    const originalGeolocation = navigator.geolocation;
+    const callbacks: PositionCallback[] = [];
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: (success: PositionCallback) => callbacks.push(success),
+      },
+    });
+    render(<Harness onStartPickupNavigation={vi.fn()} />);
+
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    act(() =>
+      callbacks[0]?.({ coords: { latitude: 43.0731, longitude: -89.4012 } } as GeolocationPosition),
+    );
+    expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue('');
+    expect(screen.getByRole('status', { name: 'Origin source' })).toHaveTextContent('manual');
+    expect(screen.queryByRole('group', { name: 'Pickup station' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Starting location' }), {
+      target: { value: 'Entered address' },
+    });
+    act(() =>
+      callbacks[1]?.({ coords: { latitude: 43.0731, longitude: -89.4012 } } as GeolocationPosition),
+    );
+    expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue(
+      'Entered address',
+    );
+    expect(screen.getByRole('status', { name: 'Origin source' })).toHaveTextContent('manual');
+    expect(screen.queryByRole('group', { name: 'Pickup station' })).not.toBeInTheDocument();
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: originalGeolocation,
+    });
+  });
+
   it('resolves coordinate searches and offers full-trip navigation', async () => {
     const user = userEvent.setup();
     render(<Harness onStartNavigation={vi.fn()} />);
@@ -162,13 +269,13 @@ describe('TripPlanner', () => {
     });
 
     render(<Harness />);
-    await user.click(screen.getByRole('radio', { name: 'My location' }));
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
 
     expect(
       await screen.findByText('Couldn’t find your location. Enter an address or try again.'),
     ).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Retry device location' })).toBeVisible();
-    await user.click(screen.getByRole('radio', { name: 'Enter address' }));
+    expect(screen.getByRole('button', { name: 'Use my location' })).toBeVisible();
+    await user.clear(screen.getByRole('combobox', { name: 'Starting location' }));
     expect(screen.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
 
     Object.defineProperty(navigator, 'geolocation', {
@@ -206,9 +313,11 @@ describe('TripPlanner', () => {
     });
 
     render(<Harness />);
-    await user.click(screen.getByRole('radio', { name: 'My location' }));
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: 'Enter address' })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue(''),
+    );
     expect(screen.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
     expect(
       screen.getByText(
@@ -251,9 +360,11 @@ describe('TripPlanner', () => {
     });
 
     render(<EmptyHarness />);
-    await user.click(screen.getByRole('radio', { name: 'My location' }));
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: 'Enter address' })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue(''),
+    );
     expect(
       screen.getByText(
         'Live station data is not available to validate your device location. Enter a starting location instead.',
@@ -293,8 +404,12 @@ describe('TripPlanner', () => {
     });
     const { rerender } = render(<RefreshingHarness currentStations={stations} />);
 
-    await user.click(screen.getByRole('radio', { name: 'My location' }));
-    await waitFor(() => expect(screen.getByRole('radio', { name: 'My location' })).toBeChecked());
+    await user.click(screen.getByRole('button', { name: 'Use my location' }));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue(
+        'My location',
+      ),
+    );
 
     const distantStations = stations.map((currentStation, index) => ({
       ...currentStation,
@@ -303,7 +418,9 @@ describe('TripPlanner', () => {
     }));
     rerender(<RefreshingHarness currentStations={distantStations} />);
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: 'Enter address' })).toBeChecked());
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Starting location' })).toHaveValue(''),
+    );
     expect(
       screen.getByText(
         'Your device location is outside the current BCycle service area. Enter a starting location instead.',

@@ -30,7 +30,10 @@ unlock bikes, reserve equipment, buy passes, or confirm a rental return.
 
 ## What the app does
 
-- Resolves an origin manually or through the browser's Geolocation API.
+- Enter a **Starting location**, or press the location icon beside the field to
+  use the browser's current location. Editing the field switches back to an address.
+- **Clear** resets both address fields, station choices, and the planned trip.
+  Pending searches and location requests cannot refill the cleared fields.
 - Runs origin and destination address search after a 700 ms typing pause once
   at least three characters are present. Enter selects the first visible result;
   latitude/longitude input is validated locally without a geocoding request.
@@ -48,9 +51,10 @@ unlock bikes, reserve equipment, buy passes, or confirm a rental return.
   planning still requires a network connection.
 
 The planner keeps the starting point, destination, station choices, and navigation
-action up front. The optional station map sits below the trip; About and install
-details stay collapsed. Routine refresh messages, timestamps, and device coordinates
-stay out of the interface. Short, actionable messages appear when help is needed.
+action up front. Address entry and the current-location button share one row.
+The optional station map sits below the trip; About and install details stay
+collapsed. Routine refresh messages, timestamps, and device coordinates stay out
+of the interface. Short, actionable messages appear when help is needed.
 
 ## Architecture and data flow
 
@@ -166,18 +170,21 @@ with no GPS or compass access, location marker, follow control, turn prompts, or
 arrival clock. This choice persists after reload; older saved trips default to
 the route-only view.
 
-Choosing **My location** in the planner enables live navigation. Existing location
+Pressing **Use my location**, the location icon beside **Starting location**, enables
+live navigation. The field shows **My location** after selection. Existing location
 permission shows the current position and accuracy circle automatically. Approximate
 positions remain visible, while proximity actions and automatic route updates still
 require an accurate fix. The location button can request access again when needed.
 
-In live navigation, press the location button to zoom in and follow movement. A direction arrow and
-cone use the phone's compass when available, with device-orientation permission
-requested from that button on browsers that require it. GPS travel direction is
-the fallback; no reliable heading displays a location dot. Dragging the map pauses
-following, and **Show route** restores the overview. GPS and compass tracking work
-while the app is visible. Screen wake lock is requested where supported and
-released when navigation ends or hides.
+In live navigation, press the location button to zoom in and follow movement.
+The map turns so the direction the phone faces points upward, with the location
+arrow and cone aligned to it. The phone's compass supplies the heading when available;
+the button requests device-orientation permission on browsers that require it.
+GPS travel direction is the fallback; no reliable heading displays a location dot
+and a north-up map. Dragging pauses following and rotation; press the location
+button to resume. **Show route** restores the north-up overview. GPS and compass
+tracking work while the app is visible. Screen wake lock is requested where
+supported and released when navigation ends or hides.
 
 Station availability refreshes silently every 15 seconds during navigation, pauses while
 hidden, and refreshes on return. Existing counts stay visible during background

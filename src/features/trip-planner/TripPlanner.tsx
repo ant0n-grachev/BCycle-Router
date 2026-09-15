@@ -18,7 +18,14 @@ export default function TripPlanner({
 }: TripPlannerProps) {
   const {
     originMode,
-    setOriginMode,
+    useCurrentLocation,
+    clear,
+    originText,
+    setOriginText,
+    destinationText,
+    setDestinationText,
+    originSearchKey,
+    destinationSearchKey,
     originModeNotice,
     serviceArea,
     setManualOrigin,
@@ -36,44 +43,39 @@ export default function TripPlanner({
     plan,
   } = controller;
   return (
-    <section className="trip-planner" aria-labelledby="trip-planner-title">
-      <div className="section-heading">
-        <h2 id="trip-planner-title">Where are you going?</h2>
-      </div>
-
+    <section className="trip-planner" aria-label="Trip planner">
       <div className="trip-planner__locations">
-        <fieldset className="origin-mode">
-          <legend className="visually-hidden">Starting location method</legend>
-          <label>
-            <input
-              type="radio"
-              name="origin-mode"
-              value="manual"
-              checked={originMode === 'manual'}
-              onChange={() => setOriginMode('manual')}
-            />
-            Enter address
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="origin-mode"
-              value="device"
-              checked={originMode === 'device'}
-              onChange={() => setOriginMode('device')}
-            />
-            My location
-          </label>
-        </fieldset>
-
-        <div hidden={originMode !== 'manual'}>
-          <LocationSearch
-            label="Starting location"
-            onSelectionChange={(selection) => setManualOrigin(selection)}
-            searchAfterPause
-            serviceArea={serviceArea}
-          />
-        </div>
+        <LocationSearch
+          key={`origin-${originSearchKey}`}
+          label="Starting location"
+          value={originText}
+          onValueChange={setOriginText}
+          onInputChange={() => setManualOrigin(null)}
+          onSelectionChange={(selection) => setManualOrigin(selection)}
+          searchAfterPause
+          serviceArea={serviceArea}
+          inputAction={
+            <button
+              className="button button--secondary location-search__device"
+              type="button"
+              aria-label="Use my location"
+              aria-busy={originMode === 'device' && deviceLocation.loading}
+              onClick={useCurrentLocation}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="6" />
+                <circle cx="12" cy="12" r="2" />
+                <path d="M12 2v4m0 12v4M2 12h4m12 0h4" />
+              </svg>
+            </button>
+          }
+        />
 
         {originModeNotice ? (
           <p className="planner-message" role="status">
@@ -95,26 +97,22 @@ export default function TripPlanner({
                 </p>
               </div>
             ) : null}
-            {!deviceLocation.loading && deviceLocation.error !== null ? (
-              <button
-                className="button button--secondary"
-                type="button"
-                onClick={deviceLocation.retry}
-                aria-label="Retry device location"
-              >
-                Retry location
-              </button>
-            ) : null}
           </div>
         ) : null}
 
         <LocationSearch
+          key={`destination-${destinationSearchKey}`}
           label="Destination"
+          value={destinationText}
+          onValueChange={setDestinationText}
           onSelectionChange={(selection) => setDestination(selection)}
           searchAfterPause
           serviceArea={serviceArea}
         />
       </div>
+      <button className="trip-planner__clear" type="button" onClick={clear}>
+        Clear
+      </button>
 
       {pickupIssue ? (
         <p className="planner-message" role="status">

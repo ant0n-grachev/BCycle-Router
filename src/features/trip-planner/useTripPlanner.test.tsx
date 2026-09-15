@@ -88,6 +88,28 @@ const resetCandidates = [
 ];
 
 describe('useTripPlanner', () => {
+  it('clears resolved points and station selections together', () => {
+    const { result } = renderHook(() => useTripPlanner(candidates));
+    act(() => {
+      result.current.setManualOrigin({ lat: 43, lon: -89 });
+      result.current.setDestination({ lat: 43.005, lon: -89, label: 'Destination' });
+      result.current.selectPickup('pickup-alternative');
+      result.current.selectDropoff('dropoff-alternative');
+    });
+    expect(result.current.plan).not.toBeNull();
+    expect(result.current.selectedPickup?.station.station_id).toBe('pickup-alternative');
+    expect(result.current.selectedDropoff?.station.station_id).toBe('dropoff-alternative');
+
+    act(() => result.current.clear());
+
+    expect(result.current.originMode).toBe('manual');
+    expect(result.current.origin).toBeNull();
+    expect(result.current.destination).toBeNull();
+    expect(result.current.selectedPickup).toBeNull();
+    expect(result.current.selectedDropoff).toBeNull();
+    expect(result.current.plan).toBeNull();
+  });
+
   it('selects ranked defaults and immediately recomputes the itinerary for an alternative', () => {
     const { result } = renderHook(() => useTripPlanner(candidates));
 
