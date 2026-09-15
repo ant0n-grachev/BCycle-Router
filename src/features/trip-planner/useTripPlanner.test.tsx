@@ -100,12 +100,16 @@ describe('useTripPlanner', () => {
     expect(result.current.selectedDropoff?.station.station_id).toBe('dropoff-recommended');
     expect(result.current.plan?.pickup.station_id).toBe('pickup-recommended');
 
-    const originalWalkingUrl = result.current.plan?.legs[0].url;
+    const originalPickupEndpoint = result.current.plan?.legs[0].to;
     act(() => result.current.selectPickup('pickup-alternative'));
 
     expect(result.current.selectedPickup?.station.station_id).toBe('pickup-alternative');
     expect(result.current.plan?.pickup.station_id).toBe('pickup-alternative');
-    expect(result.current.plan?.legs[0].url).not.toBe(originalWalkingUrl);
+    expect(result.current.plan?.legs[0].to).not.toEqual(originalPickupEndpoint);
+    expect(result.current.plan?.legs[0].to).toEqual({
+      lat: result.current.selectedPickup?.station.lat,
+      lon: result.current.selectedPickup?.station.lon,
+    });
   });
 
   it('clears the plan when editing invalidates a resolved location', () => {

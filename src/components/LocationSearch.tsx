@@ -130,7 +130,7 @@ export default function LocationSearch({
     setActiveIndex(-1);
     setEmpty(false);
     setError(null);
-    setAnnouncement(`Selected ${next.label}.`);
+    setAnnouncement('');
     onSelectionChange(next);
   }
 
@@ -317,7 +317,7 @@ export default function LocationSearch({
             onChange={(event) => handleChange(event.target.value)}
             onKeyDown={handleKeyDown}
             onFocus={() => setOpen(visibleResults.length > 0)}
-            placeholder="Address or latitude, longitude"
+            placeholder="Address or place"
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={visibleOpen}
@@ -379,7 +379,7 @@ export default function LocationSearch({
           </button>
         )}
       </div>
-      <p id={hintId} className="field-hint">
+      <p id={hintId} className="visually-hidden">
         {searchAfterPause
           ? 'Type at least 3 characters.'
           : 'Search runs only when you press Enter or choose Search.'}

@@ -28,6 +28,19 @@
   text-rendering: optimizeLegibility;
 }
 
+.pickup-shortcut .button,
+.trip-results__start {
+  width: 12rem;
+  max-width: 100%;
+}
+.navigation-loading {
+  display: grid;
+  gap: 1rem;
+  place-content: center;
+  min-height: 100dvh;
+  padding: 1rem;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -113,15 +126,6 @@ a:hover {
   border-bottom: 1px solid #e2e8f0;
 }
 
-.eyebrow {
-  margin: 0 0 0.35rem;
-  color: var(--primary);
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
 .app-title {
   margin: 0;
   font-size: clamp(1.7rem, 5vw, 2.5rem);
@@ -134,14 +138,6 @@ a:hover {
   align-items: baseline;
   flex-wrap: wrap;
   column-gap: 0.5rem;
-}
-
-.app-subtitle,
-.section-heading > p:last-child {
-  max-width: 42rem;
-  margin: 0.55rem 0 0;
-  color: var(--muted);
-  line-height: 1.55;
 }
 
 .app-byline {
@@ -165,20 +161,34 @@ a:hover {
 .service-status {
   display: grid;
   gap: 0.75rem;
+  padding-block: 0.75rem;
   background: var(--surface-subtle);
-  border-bottom: 1px solid #e2e8f0;
+  border-top: 1px solid #e2e8f0;
 }
 
 .service-status__header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 
+.service-status h2 {
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.service-status__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
 .service-status h2,
-.trip-planner h2,
-.trip-results h3 {
+.trip-planner h2 {
   margin: 0;
   line-height: 1.2;
 }
@@ -237,9 +247,7 @@ a:hover {
 }
 
 .service-status__summary,
-.service-status__warning,
 .field-error,
-.field-success,
 .field-status,
 .planner-message {
   margin: 0;
@@ -248,17 +256,10 @@ a:hover {
   line-height: 1.45;
 }
 
-.service-status__summary--operational {
-  color: var(--success);
-  background: var(--success-soft);
-  border: 1px solid #86efac;
-}
-
 .service-status__summary--no-bikes,
 .service-status__summary--no-docks,
 .service-status__summary--service-disabled,
 .service-status__summary--stale,
-.service-status__warning,
 .planner-message,
 .field-status {
   color: var(--warning);
@@ -271,18 +272,6 @@ a:hover {
   color: var(--danger);
   background: var(--danger-soft);
   border: 1px solid #fca5a5;
-}
-
-.field-success {
-  color: var(--success);
-  background: var(--success-soft);
-  border: 1px solid #86efac;
-}
-
-.service-status__timestamp {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
 }
 
 .station-map {
@@ -337,12 +326,6 @@ a:hover {
 
 .station-map__legend-symbol--unavailable {
   background: #b91c1c;
-}
-
-.station-map__hint {
-  margin: 0 0 0.75rem;
-  color: var(--muted);
-  font-size: 0.86rem;
 }
 
 .station-map__canvas,
@@ -709,14 +692,9 @@ a:hover {
 
 .station-choice__badge {
   align-self: flex-start;
-  padding: 0.15rem 0.45rem;
   color: var(--primary);
-  background: #ffffff;
-  border: 1px solid #7dd3fc;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .station-choice__meta {
@@ -731,64 +709,11 @@ a:hover {
   font-weight: 800;
 }
 
-.trip-results {
-  display: grid;
-  gap: 0.7rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid #e2e8f0;
-}
-
-.trip-results__note {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.45;
-}
-
-.trip-results__legs {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.7rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.trip-results__leg {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.9rem;
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-
-.trip-results__leg h4,
-.trip-results__route,
-.trip-results__distance {
-  margin: 0;
-}
-
-.trip-results__route {
-  overflow-wrap: anywhere;
-  line-height: 1.45;
-}
-
-.trip-results__distance {
-  color: var(--muted);
-  font-size: 0.84rem;
-  line-height: 1.4;
-}
-
-.trip-results__link {
-  width: 100%;
-  margin-top: auto;
-}
-
 .app-footer {
-  display: grid;
-  gap: 0.35rem;
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 1.5rem;
+  padding-block: 0.65rem;
   color: var(--muted);
   background: var(--surface-subtle);
   border-top: 1px solid #e2e8f0;
@@ -801,14 +726,16 @@ a:hover {
   margin: 0;
 }
 
+.app-install[open] {
+  flex-basis: 100%;
+}
+
 .app-install > summary {
   width: fit-content;
   min-height: 2.75rem;
   padding: 0.65rem 0;
   color: var(--primary);
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 0.16em;
   cursor: pointer;
 }
 
@@ -828,18 +755,12 @@ a:hover {
     padding-left: max(0.65rem, env(safe-area-inset-left));
   }
 
-  .service-status__header {
-    flex-direction: column;
-  }
-
-  .service-status__actions,
-  .service-status__actions .button,
-  .pickup-shortcut .button {
+  .pickup-shortcut .button,
+  .trip-results__start {
     width: 100%;
   }
 
-  .station-choice__list,
-  .trip-results__legs {
+  .station-choice__list {
     grid-template-columns: 1fr;
   }
 }
@@ -859,11 +780,6 @@ a:hover {
 
   .location-search__submit {
     width: 100%;
-  }
-
-  .origin-mode {
-    flex-direction: column;
-    gap: 0.2rem;
   }
 }
 

@@ -40,6 +40,11 @@ test('loads cleanly without console errors or a framework overlay', async ({ pag
   expect(bylineBox).not.toBeNull();
   expect((bylineBox?.y ?? 0) - (titleBox?.y ?? 0)).toBeLessThan((titleBox?.height ?? 0) + 8);
   expect((bylineBox?.x ?? 0) - ((titleBox?.x ?? 0) + (titleBox?.width ?? 0))).toBeLessThan(32);
+  if (testInfo.project.name === 'chromium') {
+    await page.screenshot({ path: '/tmp/brouter-cleanup-empty-desktop.png', fullPage: true });
+  } else if (testInfo.project.name === 'mobile-chromium') {
+    await page.screenshot({ path: '/tmp/brouter-cleanup-empty-mobile.png', fullPage: true });
+  }
   await expect(page.locator('vite-error-overlay')).toHaveCount(0);
   expect(browserErrors).toEqual([]);
 });
@@ -49,7 +54,24 @@ test('uses concise map, search, and attribution copy', async ({ page }) => {
   await loadReadyApp(page);
 
   await expect(page.getByRole('heading', { name: 'Service Area Map' })).toBeVisible();
-  await expect(page.getByText('Type at least 3 characters.', { exact: true })).toHaveCount(2);
+  const searchHints = page.getByText('Type at least 3 characters.', { exact: true });
+  await expect(searchHints).toHaveCount(2);
+  for (const [index, label] of ['Starting location', 'Destination'].entries()) {
+    const hint = searchHints.nth(index);
+    await expect(hint).toHaveClass(/visually-hidden/);
+    const hintId = await hint.getAttribute('id');
+    expect(hintId).toBeTruthy();
+    await expect(page.getByRole('combobox', { name: label })).toHaveAttribute(
+      'aria-describedby',
+      new RegExp(`(^|\\s)${hintId}(\\s|$)`),
+    );
+  }
+  await expect(page.locator('.app-header .eyebrow, .app-header .app-subtitle')).toHaveCount(0);
+  await expect(page.locator('.origin-mode legend')).toHaveClass(/visually-hidden/);
+  await expect(page.getByRole('radio', { name: 'Enter address' })).toBeChecked();
+  await expect(page.getByRole('radio', { name: 'My location' })).not.toBeChecked();
+  await expect(page.getByRole('button', { name: 'Refresh station data' })).toHaveCount(0);
+  await expect(page.getByText(/Last successful refresh:/)).toHaveCount(0);
   await expect(page.getByText('Based on station locations;', { exact: false })).toHaveCount(0);
   await expect(page.getByLabel('Address search attribution and privacy')).toHaveCount(0);
 
@@ -64,11 +86,17 @@ test('uses concise map, search, and attribution copy', async ({ page }) => {
   await expect(attribution).toHaveAttribute('href', 'https://www.openstreetmap.org/copyright');
 });
 
-test('reveals footer install instructions from the keyboard', async ({ page }) => {
+test('keeps About collapsed and reveals install instructions from the keyboard', async ({
+  page,
+}) => {
   await mockAppNetwork(page);
   await loadReadyApp(page);
 
-  const disclosure = page.locator('details').filter({ hasText: 'How to install this app' });
+  const about = page.locator('details').filter({ hasText: 'About BRouter' });
+  await expect(about).not.toHaveAttribute('open', '');
+  await expect(about.getByText(/Independent community tool/)).toBeHidden();
+
+  const disclosure = page.locator('details').filter({ hasText: 'Install app' });
   const summary = disclosure.locator('summary');
 
   await expect(summary).toBeVisible();
@@ -108,7 +136,8 @@ for (const installedMode of ['standalone', 'ios'] as const) {
     await loadReadyApp(page);
 
     await expect(page.locator('.app-footer')).toBeVisible();
-    await expect(page.getByText('How to install this app', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('About BRouter', { exact: true })).toBeVisible();
+    await expect(page.getByText('Install app', { exact: true })).toHaveCount(0);
   });
 }
 
@@ -172,8 +201,7 @@ test('selects eligible pickup and drop-off stations from the map and synchronize
 
   const pickupChoices = page.getByRole('group', { name: 'Pickup station' });
   const dropoffChoices = page.getByRole('group', { name: 'Drop-off station' });
-  const routeLinks = page.getByRole('link', { name: /in Google Maps/ });
-  const originalBikeUrl = await routeLinks.nth(1).getAttribute('href');
+  await expect(page.locator('a[href*="google.com/maps"]')).toHaveCount(0);
 
   await page.locator('[title^="West Washington & Bedford:"]').click();
   await page.getByRole('button', { name: 'Choose West Washington & Bedford as pickup' }).click();
@@ -187,7 +215,6 @@ test('selects eligible pickup and drop-off stations from the map and synchronize
   await expect(
     page.locator('[title^="West Washington & Bedford:"] .station-map__marker'),
   ).toHaveClass(/station-map__marker--selected/);
-  await expect(routeLinks.nth(1)).not.toHaveAttribute('href', originalBikeUrl ?? '');
 
   await page.locator('[title^="Monona Terrace:"]').click();
   await page.getByRole('button', { name: 'Choose Monona Terrace as drop-off' }).click();
@@ -196,7 +223,6 @@ test('selects eligible pickup and drop-off stations from the map and synchronize
   await expect(page.locator('[title^="Monona Terrace:"] .station-map__marker')).toHaveClass(
     /station-map__marker--selected/,
   );
-  await expect(routeLinks.nth(1)).toHaveAttribute('href', /destination=43\.0762%2C-89\.3867/);
 });
 
 test('automatically searches manual origin and lets Enter choose the first result', async ({
@@ -259,38 +285,34 @@ test('resolves coordinates locally without a Photon request', async ({ page }) =
   expect(calls.geocoding).toBe(0);
 });
 
-test('offers walking directions to the selected pickup without requiring a destination', async ({
+test('offers in-app navigation to the selected pickup without requiring a destination', async ({
   page,
 }) => {
   await mockAppNetwork(page);
   await loadReadyApp(page);
   await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
 
-  const recommendedLink = page.getByRole('link', { name: 'Walk to Capitol Square' });
-  await expect(recommendedLink).toBeVisible();
-  const recommendedDirections = new URL((await recommendedLink.getAttribute('href')) ?? '');
-  expect(recommendedDirections.searchParams.get('origin')).toBe('43.0731,-89.4012');
-  expect(recommendedDirections.searchParams.get('destination')).toBe('43.0732,-89.4011');
-  expect(recommendedDirections.searchParams.get('travelmode')).toBe('walking');
-  expect(recommendedDirections.searchParams.get('api')).toBe('1');
-  await expect(page.getByRole('heading', { name: 'Your three-leg itinerary' })).toHaveCount(0);
+  const pickupNavigation = page.getByRole('button', { name: 'Navigate to pickup' });
+  await expect(pickupNavigation).toBeVisible();
+  await expect(page.locator('a[href*="google.com/maps"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toHaveCount(0);
 
   await page
     .getByRole('group', { name: 'Pickup station' })
     .getByRole('radio', { name: /West Washington & Bedford/ })
     .check();
 
-  const alternativeLink = page.getByRole('link', { name: 'Walk to West Washington & Bedford' });
-  await expect(alternativeLink).toBeVisible();
-  await expect(page.getByRole('link', { name: /^Walk to / })).toHaveCount(1);
-  const alternativeDirections = new URL((await alternativeLink.getAttribute('href')) ?? '');
-  expect(alternativeDirections.searchParams.get('destination')).toBe('43.074,-89.3997');
-  expect(alternativeDirections.searchParams.get('travelmode')).toBe('walking');
+  await expect(
+    page
+      .getByRole('group', { name: 'Pickup station' })
+      .getByRole('radio', { name: /West Washington & Bedford/ }),
+  ).toBeChecked();
+  await expect(pickupNavigation).toBeVisible();
 });
 
-test('defaults to the closest stations, explains alternatives, and recomputes route links', async ({
+test('defaults to the closest stations and keeps alternative selections current', async ({
   page,
-}) => {
+}, testInfo) => {
   await mockAppNetwork(page);
   await loadReadyApp(page);
   await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
@@ -299,40 +321,37 @@ test('defaults to the closest stations, explains alternatives, and recomputes ro
   const pickupChoices = page.getByRole('group', { name: 'Pickup station' });
   const dropoffChoices = page.getByRole('group', { name: 'Drop-off station' });
   await expect(pickupChoices.locator('.station-choice__badge')).toHaveText([
-    'Recommended — closest',
-    'Alternative — next closest',
-    'Alternative — more bikes',
+    'Closest',
+    'Nearby',
+    'More bikes',
   ]);
   await expect(dropoffChoices.locator('.station-choice__badge')).toHaveText([
-    'Recommended — closest',
-    'Alternative — next closest',
-    'Alternative — more docks',
+    'Closest',
+    'Nearby',
+    'More docks',
   ]);
   await expect(pickupChoices.getByRole('radio', { name: /Capitol Square/ })).toBeChecked();
   await expect(dropoffChoices.getByRole('radio', { name: /East Wilson & MLK/ })).toBeChecked();
-  await expect(page.getByRole('heading', { name: 'Your itinerary' })).toBeVisible();
-  await expect(page.getByText('Your destination is at the drop-off station.')).toBeVisible();
-
-  const routeLinks = page.getByRole('link', { name: /in Google Maps/ });
-  await expect(routeLinks).toHaveCount(2);
-  const originalWalkUrl = await routeLinks.nth(0).getAttribute('href');
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
+  if (testInfo.project.name === 'chromium') {
+    await page.screenshot({ path: '/tmp/brouter-cleanup-planned-desktop.png', fullPage: true });
+  } else if (testInfo.project.name === 'mobile-chromium') {
+    await page.screenshot({ path: '/tmp/brouter-cleanup-planned-mobile.png', fullPage: true });
+  }
 
   const alternative = pickupChoices.getByRole('radio', {
     name: /West Washington & Bedford/,
   });
   await alternative.check();
   await expect(alternative).toBeChecked();
-  await expect(routeLinks.nth(0)).not.toHaveAttribute('href', originalWalkUrl ?? '');
-
-  await expect(routeLinks.nth(0)).toHaveAttribute('href', /travelmode=walking/);
-  await expect(routeLinks.nth(1)).toHaveAttribute('href', /travelmode=bicycling/);
-  await expect(page.getByRole('link', { name: /^Walk to / })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
+  await expect(page.locator('a[href*="google.com/maps"]')).toHaveCount(0);
 });
 
 test('reports zero bikes without claiming a seasonal closure', async ({ page }) => {
   await mockAppNetwork(page, { zeroBikes: true });
   await page.goto('/');
-  await expect(page.getByText('No rentable bikes are currently reported.')).toBeVisible();
+  await expect(page.getByText('No bikes available right now.')).toBeVisible();
 
   await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
 
@@ -342,18 +361,20 @@ test('reports zero bikes without claiming a seasonal closure', async ({ page }) 
   await expect(page.locator('body')).not.toContainText(/season|seasonal/i);
 });
 
-test('keeps the last successful snapshot when an explicit refresh fails', async ({ page }) => {
+test('keeps the last successful station counts quietly after an automatic refresh fails', async ({
+  page,
+}) => {
   const calls = await mockAppNetwork(page, { failStatusAfter: 1 });
   await loadReadyApp(page);
-  const refreshedAt = page.getByText(/Last successful refresh:/);
-  const originalRefreshText = await refreshedAt.textContent();
+  await page.getByRole('button', { name: 'Show station map' }).click();
+  const cachedStation = page.locator('.station-map__marker').filter({ hasText: '2/4' });
+  await expect(cachedStation).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new Event('pageshow')));
 
-  await page.getByRole('button', { name: 'Refresh station data' }).click();
-
-  await expect(
-    page.getByText('Refresh failed. Showing the last successful station snapshot.'),
-  ).toBeVisible();
-  await expect(refreshedAt).toHaveText(originalRefreshText ?? '');
+  await expect(cachedStation).toBeVisible();
+  await expect(page.getByText('Availability may be out of date.')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry' })).toHaveCount(0);
+  await expect(page.getByText(/Last successful refresh:/)).toHaveCount(0);
   expect(calls.stationStatus).toBeGreaterThanOrEqual(2);
 });
 
@@ -368,15 +389,14 @@ test('uses mocked device geolocation without switching to manual mode', async ({
   await mockAppNetwork(page);
   await loadReadyApp(page);
 
-  await page.getByRole('radio', { name: 'Use my device location' }).check();
+  await page.getByRole('radio', { name: 'My location' }).check();
 
-  await expect(page.getByText(/Device location received: 43\.07310, -89\.40120/)).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Use my device location' })).toBeChecked();
+  await expect(page.getByText(/Device location received:/)).toHaveCount(0);
+  await expect(page.getByRole('radio', { name: 'My location' })).toBeChecked();
   await expect(page.getByRole('group', { name: 'Pickup station' })).toBeVisible();
 
   await resolveCoordinates(page, 'Destination', DESTINATION_COORDINATES);
-  await expect(page.getByRole('heading', { name: 'Your itinerary' })).toBeVisible();
-  await expect(page.getByText('Your destination is at the drop-off station.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
 });
 
 test('switches an out-of-area device location to manual origin entry', async ({
@@ -390,9 +410,9 @@ test('switches an out-of-area device location to manual origin entry', async ({
   await mockAppNetwork(page);
   await loadReadyApp(page);
 
-  await page.getByRole('radio', { name: 'Use my device location' }).click();
+  await page.getByRole('radio', { name: 'My location' }).click();
 
-  await expect(page.getByRole('radio', { name: 'Enter a starting location' })).toBeChecked();
+  await expect(page.getByRole('radio', { name: 'Enter address' })).toBeChecked();
   await expect(page.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
   await expect(
     page.getByText(
@@ -406,7 +426,7 @@ test('has no serious or critical Axe violations in the planned-trip view', async
   await loadReadyApp(page);
   await resolveCoordinates(page, 'Starting location', ORIGIN_COORDINATES);
   await resolveCoordinates(page, 'Destination', DESTINATION_COORDINATES);
-  const installDisclosure = page.locator('details.app-install');
+  const installDisclosure = page.locator('details.app-install').filter({ hasText: 'Install app' });
   await installDisclosure.locator('summary').click();
   await expect(installDisclosure).toHaveAttribute('open', '');
 
@@ -475,9 +495,7 @@ test('loads the app shell offline and does not return HTML for a failed asset re
 
   await expect(page.getByRole('heading', { level: 1, name: /Madison's BRouter/ })).toBeVisible();
   await expect(
-    page.getByText(
-      'You are offline. The app shell is available, but live station planning and address search require a connection.',
-    ),
+    page.getByText('You’re offline. Reconnect to search and see current availability.'),
   ).toBeVisible();
 
   await context.setOffline(false);

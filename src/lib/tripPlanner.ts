@@ -1,6 +1,5 @@
 import type { LatLon, Station } from '../types';
 import { haversineKm, kmToMiles } from './distance';
-import { buildGMapsBicycling, buildGMapsWalking } from './maps';
 
 export type TripDestination = LatLon & { label?: string };
 
@@ -12,7 +11,6 @@ export interface TripLeg {
   fromDescription: string;
   toDescription: string;
   distanceMi: number;
-  url: string;
 }
 
 export interface TripPlan {
@@ -48,7 +46,6 @@ export function createTripPlan(
       fromDescription: 'Current location',
       toDescription: pickup.name,
       distanceMi: dWalk1Mi,
-      url: buildGMapsWalking(origin, pickupPoint),
     },
     {
       title: 'Ride to dropoff',
@@ -58,7 +55,6 @@ export function createTripPlan(
       fromDescription: pickup.name,
       toDescription: dropoff.name,
       distanceMi: dBikeMi,
-      url: buildGMapsBicycling(pickupPoint, dropoffPoint),
     },
     {
       title: 'Walk to destination',
@@ -68,7 +64,6 @@ export function createTripPlan(
       fromDescription: dropoff.name,
       toDescription: destinationDescription(destination),
       distanceMi: dWalk2Mi,
-      url: buildGMapsWalking(dropoffPoint, destination),
     },
   ];
   return { pickup, dropoff, legs, dWalk1Mi, dBikeMi, dWalk2Mi };

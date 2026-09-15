@@ -2,16 +2,17 @@
 
 [Open the deployed application](https://bcycle-router.netlify.app/)
 
-BRouter is an independent, static trip-planning aid for Madison, Wisconsin's
+BRouter is an independent trip-planning and navigation aid for Madison, Wisconsin's
 BCycle system. It addresses a practical bike-share problem: a useful trip needs
 both a rentable bike near the starting point and an open return dock near the
 destination.
 
 The app combines live GBFS station availability with a user-entered or
 device-provided origin and destination. It ranks nearby pickup and drop-off
-choices, lets the rider choose alternatives, and creates up to three separate
-Google Maps links for the walking, cycling, and final walking legs. BRouter does
-not unlock bikes, reserve equipment, or calculate turn-by-turn routes itself.
+choices and lets the rider choose alternatives. **Go to navigation** opens a full
+viewport map with walking, cycling, and final walking directions. A starting
+location alone can also open navigation to the selected pickup. BRouter does not
+unlock bikes, reserve equipment, buy passes, or confirm a rental return.
 
 <p align="center">
   <video
@@ -40,16 +41,23 @@ not unlock bikes, reserve equipment, or calculate turn-by-turn routes itself.
   unavailable states without treating zero bikes as a seasonal closure.
 - Recommends up to three eligible pickup stations and three eligible drop-off
   stations within one mile, with the first option selected by default.
-- Updates the itinerary immediately when the rider chooses another station.
+- Updates the selected trip immediately when the rider chooses another station.
 - Shows an optional, lazy-loaded Leaflet map and an approximate station-coverage
   hull. This visualization is not an official service boundary.
 - Installs as a PWA. The compiled app shell can load offline, while live station
   planning still requires a network connection.
 
+The planner keeps the starting point, destination, station choices, and navigation
+action up front. The optional station map sits below the trip; About and install
+details stay collapsed. Routine refresh messages, timestamps, and device coordinates
+stay out of the interface. Short, actionable messages appear when help is needed.
+
 ## Architecture and data flow
 
-The application is a browser-only React and TypeScript SPA. It has no backend,
-account system, private API key, or server-side data store.
+The application is a React and TypeScript SPA with a small server endpoint for
+openrouteservice directions. The routing API key stays on the server. There is
+no BRouter account system or server-side trip store; the active journey and
+rerouting preference are saved on the rider's device.
 
 ```mermaid
 flowchart TD
@@ -69,7 +77,10 @@ flowchart TD
     Photon --> Ranking
     Ranking --> Choices[Pickup and drop-off choices]
     Choices --> Legs[Three-leg itinerary]
-    Legs --> Maps[Separate Google Maps links]
+    Legs --> Navigation[In-app guided navigation]
+    Navigation --> RouteProxy[Same-origin routing endpoint]
+    RouteProxy --> ORS[openrouteservice walking/cycling directions]
+    Navigation --> BCycle[User-initiated BCycle app handoff]
     Snapshot --> Map[Lazy-loaded Leaflet station map]
 ```
 
@@ -80,8 +91,8 @@ Responsibilities are intentionally separated:
   bounds and filtering, coordinate parsing, throttling, cancellation, and cache
   persistence.
 - `src/lib/stations.ts` contains deterministic station eligibility and ranking.
-- `src/lib/tripPlanner.ts` and `src/lib/maps.ts` create the itinerary and its
-  correctly scoped map links.
+- `src/lib/tripPlanner.ts` creates the three-leg itinerary and straight-line
+  planning estimates.
 - `src/features/trip-planner/` owns planner state, while focused components
   render search, station choices, service status, results, and the station map.
 
@@ -111,23 +122,100 @@ Each option is labeled to explain whether it is the closest, offers more bikes
 or docks, or is the next closest. Selections with only one bike or one dock
 receive a visible warning.
 
-## Distances and Google Maps
+## Distances and in-app routes
 
-Every distance shown by BRouter is a **straight-line estimate** calculated with
-the Haversine formula. It is not an actual walking distance, cycling distance,
-travel time, or guarantee that a route exists.
+Station-choice distances are **straight-line estimates** calculated with the
+Haversine formula. They are not actual walking or cycling distances, travel
+times, or guarantees that a route exists.
 
-The result is deliberately split into up to three map handoffs:
+The result is split into up to three navigation legs:
 
 1. Walk from the starting location to the selected pickup station.
 2. Cycle from the pickup station to the selected drop-off station.
 3. Walk from the drop-off station to the final destination.
 
-Walking legs below 0.005 mile, which would display as 0.00 mile, are omitted
-because the rider is already at that endpoint. Every remaining leg displays its
-endpoints and estimate and opens its own Google Maps URL with the correct
-`walking` or `bicycling` travel mode. Google Maps, rather than BRouter,
-calculates the routed distance and directions for that individual leg.
+**Go to navigation** starts the complete trip at pickup. The planner has no
+separate itinerary cards; walking and cycling legs are selected inside navigation.
+All route actions remain in BRouter.
+
+## Guided navigation
+
+After choosing all four trip points, press **Go to navigation**. The map fills the
+app viewport and starts with the walk to pickup. If only the starting location
+has been chosen, **Navigate to pickup** opens a pickup-only journey without a leg switcher. Directions
+and distances in navigation use openrouteservice routes, rather than the planner's
+straight-line estimates. Time remaining is an estimate based on the provider's
+route duration and progress.
+
+The **Open BCycle app** button appears near the active station when a location
+fix is recent (at most 30 seconds old), accurate to 50 meters or better, and the
+distance plus reported accuracy is within 100 meters. It uses the general
+`bcycle://` launch URI advertised by Madison's GBFS system metadata. This is the
+only navigation action that leaves BRouter, and it does not send an unlock,
+purchase, or return command. Returning to BRouter does not change the active leg;
+the rider chooses the next or previous leg with the stage controls at the bottom
+of the navigation screen.
+
+The app cannot determine whether BCycle actually unlocked or accepted a bike.
+The launch URI needs verification on a physical phone with BCycle installed;
+automated tests can only simulate that boundary. Fullscreen means the
+available app viewport, not guaranteed removal of operating-system browser chrome.
+An entered starting address opens a route-only view, even if the browser already
+allows location access. It shows the selected leg, route, distance, and duration,
+with no GPS or compass access, location marker, follow control, turn prompts, or
+arrival clock. This choice persists after reload; older saved trips default to
+the route-only view.
+
+Choosing **My location** in the planner enables live navigation. Existing location
+permission shows the current position and accuracy circle automatically. Approximate
+positions remain visible, while proximity actions and automatic route updates still
+require an accurate fix. The location button can request access again when needed.
+
+In live navigation, press the location button to zoom in and follow movement. A direction arrow and
+cone use the phone's compass when available, with device-orientation permission
+requested from that button on browsers that require it. GPS travel direction is
+the fallback; no reliable heading displays a location dot. Dragging the map pauses
+following, and **Show route** restores the overview. GPS and compass tracking work
+while the app is visible. Screen wake lock is requested where supported and
+released when navigation ends or hides.
+
+Station availability refreshes silently every 15 seconds during navigation, pauses while
+hidden, and refreshes on return. Existing counts stay visible during background
+refreshes, without freshness labels or refresh warnings. **Navigation options → If a station becomes
+unavailable** offers **Ask me first** (default) and **Change route automatically**.
+Only fresh, successful station data can trigger a station replacement. The
+pickup walk checks pickup and planned return availability; riding checks only
+the return station; the final walk does not change stations. Selecting a previous
+leg resumes the checks for that leg. Alternatives remain within the planner's one-mile endpoint radius. If
+none exists, the app explains the problem and retains the selected destination.
+
+Active journey state is stored locally under `brouter:journey:v1`, validated on
+reload, and expires after twelve hours without a journey-state update. GPS samples
+are not persisted. Ending navigation clears the saved journey. The rerouting
+preference is saved separately under `brouter:reroute-mode:v1`. Offline route
+updates and fresh availability require connectivity; no fake straight-line
+navigation route is substituted when a directions request fails.
+
+### Free routing setup
+
+1. Create a free [openrouteservice account and API key](https://openrouteservice.org/dev/).
+2. For local development, create `.env.local` in the project root with:
+
+   ```dotenv
+   OPENROUTESERVICE_API_KEY=your_key_here
+   ```
+
+3. Restart `npm run dev` or `npm run preview` after adding the key. The Vite
+   development/preview server forwards the routing endpoint locally.
+4. Before a future Netlify deployment, set `OPENROUTESERVICE_API_KEY` as a Netlify
+   environment variable available to **Functions**. Do not prefix it with `VITE_`
+   or commit it. Netlify serves the endpoint at `/.netlify/functions/route`.
+
+Without the key, navigation reports that routing is not configured and offers a
+retry; station and journey features still work. The free service has usage
+limits ([current plans](https://openrouteservice.org/plans/)). Requests are cached
+and throttled, and provider errors or exhausted limits are shown in the app.
+The public Valhalla demo is not used as a production dependency.
 
 ## Live station data and freshness
 
@@ -144,11 +232,11 @@ derived from provider metadata; a documented 15-second fallback threshold is
 used when usable metadata is absent.
 
 Normal loads use a short 15-second in-memory cache and deduplicate concurrent
-requests. The app checks again automatically, while the visible Refresh action
-bypasses that cache and forces a network request. If a refresh fails after a
-valid load, the last successful snapshot remains visible with a warning and its
-timestamp. If no valid snapshot exists, the station service is shown as
-unavailable.
+requests. The app checks again automatically. If a refresh fails after a valid
+load, the last successful snapshot remains visible while background checks continue
+silently. If no valid snapshot exists, the app offers a retry without showing
+technical feed errors. Freshness is still checked internally before navigation
+can replace a station.
 
 ## Address search, attribution, and privacy
 
@@ -174,8 +262,10 @@ reused without another request.
 
 Pausing after at least three characters or pressing Enter sends that text
 directly from the browser to Photon, whose operator may receive normal request
-metadata such as the user's IP address. BRouter has no application backend and
-does not receive or store the query remotely.
+metadata such as the user's IP address. Address queries are not sent to BRouter's
+routing endpoint. During navigation, the coordinates needed to request a route
+are sent through that endpoint to openrouteservice. Route requests and the API
+key are not written to application logs, and routing responses use `no-store`.
 [OpenStreetMap contributor attribution](https://www.openstreetmap.org/copyright)
 is shown in the map controls whenever the optional map is open.
 
@@ -184,8 +274,9 @@ is shown in the map controls whenever the optional map is open.
 - Address search uses semantic forms and a WAI-ARIA combobox/listbox pattern.
 - Arrow keys move through results, Enter selects, and Escape closes the list;
   pointer selection remains available.
-- Geolocation, geocoding, station refresh, and itinerary changes use polite live
-  announcements, while actionable errors are identified separately.
+- Search progress and relevant station changes use polite live announcements,
+  while actionable errors are identified separately. Routine successful station
+  refreshes remain silent.
 - Logical headings, visible labels, non-color map symbols, strong
   `:focus-visible` styling, WCAG-AA button contrast, and practical touch targets
   support keyboard, screen-reader, and touch use.
@@ -226,7 +317,7 @@ npm run test:e2e
 
 Unit and component tests use Vitest and React Testing Library. End-to-end tests
 use Playwright with intercepted local fixtures rather than relying on live
-Madison BCycle, Photon, OpenStreetMap, or Google Maps responses.
+Madison BCycle, Photon, OpenStreetMap, or openrouteservice responses.
 
 To apply repository formatting, run `npm run format`.
 
@@ -240,13 +331,15 @@ The checked-in `netlify.toml` is the deployment contract:
 - failed JavaScript, CSS, image, icon, manifest, and service-worker asset paths:
   explicit 404 responses rather than the SPA HTML fallback
 
-Connect the repository to a Netlify site and deploy the production branch;
-Netlify reads those settings automatically. No environment variables, API keys,
-functions, or other backend services are required.
+Netlify reads those settings automatically and builds the routing function in
+`netlify/functions/route.ts`. Before deploying, configure the server-only
+`OPENROUTESERVICE_API_KEY` environment variable for Functions as described in
+**Free routing setup** above. The planner works without a key; in-app directions
+require it.
 
 `vite-plugin-pwa` generates the Workbox service worker during the production
-build. It precaches the compiled app shell, has no runtime cache for live GBFS or
-geocoding responses, and does not use `index.html` as a failed-asset response.
+build. It precaches the compiled app shell, has no runtime cache for live GBFS,
+geocoding, or routing responses, and does not use `index.html` as a failed-asset response.
 
 ## Limitations
 
@@ -255,16 +348,15 @@ geocoding responses, and does not use `index.html` as a failed-asset response.
   only an approximation, not an official or complete service boundary.
 - Live station reports can be delayed or change between planning and arrival.
   A recommendation does not reserve or guarantee a bike or dock.
-- Haversine estimates ignore streets, paths, barriers, elevation, and traffic.
-- Google Maps opens each travel leg separately; BRouter does not create one
-  mixed-mode route or provide in-app turn-by-turn navigation.
+- Planner Haversine estimates ignore streets, paths, barriers, elevation, and traffic.
+- In-app directions cover one active walking or cycling leg at a time.
 - Device location requires browser support, permission, and normally a secure
   context. A denied, timed-out, or unavailable request can be retried or
   replaced with manual entry. A device location outside the current one-mile
   station area switches directly to manual origin entry.
 - The offline PWA shell can explain connection loss, but current station
-  availability and uncached address searches require external network services.
-- Availability, Photon, map tiles, and Google Maps are subject to their
+  availability, new routes, and uncached address searches require external network services.
+- Availability, Photon, map tiles, and openrouteservice are subject to their
   providers' uptime, data quality, policies, and coverage.
 - The app has no accounts, reservations, payments, bike unlocking, predictive
   availability, or paid routing service.
@@ -274,8 +366,8 @@ geocoding responses, and does not use `index.html` as a failed-asset response.
 - [Madison BCycle GBFS discovery](https://gbfs.bcycle.com/bcycle_madison/gbfs.json)
 - [Photon](https://photon.komoot.io/)
 - [OpenStreetMap](https://www.openstreetmap.org/)
-- [Google Maps Directions](https://www.google.com/maps/dir/)
+- [openrouteservice](https://openrouteservice.org/)
 
 BRouter is an independent project and is not affiliated with, endorsed by, or
 operated by Madison BCycle, BCycle, Trek, OpenStreetMap, the Photon service,
-or Google. Product names and data sources belong to their respective owners.
+or openrouteservice. Product names and data sources belong to their respective owners.

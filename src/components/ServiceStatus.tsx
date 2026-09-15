@@ -11,28 +11,19 @@ interface ServiceStatusProps {
   onToggleMap: () => void;
 }
 
-function availabilityMessage(availability: SystemAvailability): string {
+function availabilityMessage(availability: SystemAvailability): string | null {
   switch (availability) {
     case 'operational':
-      return '';
-    case 'no-bikes':
-      return 'No rentable bikes are currently reported.';
-    case 'no-docks':
-      return 'No return docks are currently reported.';
-    case 'service-disabled':
-      return 'Station feeds currently report rental and return service disabled.';
     case 'stale':
-      return 'Station data may be out of date.';
     case 'unavailable':
-      return 'Live station data is unavailable.';
+      return null;
+    case 'no-bikes':
+      return 'No bikes available right now.';
+    case 'no-docks':
+      return 'No docks available right now.';
+    case 'service-disabled':
+      return 'Bike service is unavailable right now.';
   }
-}
-
-function timestamp(snapshot: StationSnapshot): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(snapshot.fetchedAt);
 }
 
 export default function ServiceStatus({
@@ -45,6 +36,8 @@ export default function ServiceStatus({
   onRefresh,
   onToggleMap,
 }: ServiceStatusProps) {
+  const loadFailed = Boolean(error && !snapshot);
+  const message = loadFailed ? 'Couldn’t load stations.' : availabilityMessage(availability);
   return (
     <section className="service-status" aria-labelledby="service-status-title">
       <div className="service-status__header">
@@ -52,15 +45,6 @@ export default function ServiceStatus({
           <h2 id="service-status-title">Service Area Map</h2>
         </div>
         <div className="service-status__actions">
-          <button
-            className="button button--secondary"
-            type="button"
-            onClick={onRefresh}
-            disabled={refreshing}
-            aria-label="Refresh station data"
-          >
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
           <button
             className="button button--secondary"
             type="button"
@@ -74,31 +58,25 @@ export default function ServiceStatus({
         </div>
       </div>
 
-      {refreshing || availability !== 'operational' ? (
+      {message ? (
         <div
-          className={`service-status__summary service-status__summary--${availability}`}
+          className={`service-status__summary service-status__summary--${loadFailed ? 'unavailable' : availability}`}
           role="status"
           aria-live="polite"
         >
-          <span>{refreshing ? 'Refreshing station data… ' : ''}</span>
-          <span>{availabilityMessage(availability)}</span>
+          <span>{message}</span>
+          {loadFailed ? (
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing}
+            >
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : null}
-
-      {snapshot ? (
-        <p className="service-status__timestamp">
-          Last successful refresh:{' '}
-          <time dateTime={new Date(snapshot.fetchedAt).toISOString()}>{timestamp(snapshot)}</time>
-          {snapshot.isStale ? ' · Marked stale by feed freshness metadata.' : ''}
-        </p>
-      ) : null}
-
-      {error && snapshot ? (
-        <p className="service-status__warning">
-          Refresh failed. Showing the last successful station snapshot.
-        </p>
-      ) : null}
-      {error && !snapshot ? <p className="field-error">{error}</p> : null}
     </section>
   );
 }

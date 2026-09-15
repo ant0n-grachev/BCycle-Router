@@ -42,11 +42,7 @@ describe('createTripPlan', () => {
       'Dropoff',
     ]);
     expect(plan.legs.map((leg) => leg.toDescription)).toEqual(['Pickup', 'Dropoff', 'Destination']);
-    expect(plan.legs.map((leg) => new URL(leg.url).searchParams.get('travelmode'))).toEqual([
-      'walking',
-      'bicycling',
-      'walking',
-    ]);
+    expect(plan.legs.every((leg) => !('url' in leg))).toBe(true);
     expect(plan.legs.every((leg) => Number.isFinite(leg.distanceMi))).toBe(true);
   });
 });

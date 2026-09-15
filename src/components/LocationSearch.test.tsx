@@ -508,7 +508,7 @@ describe('LocationSearch', () => {
     expect(onSelectionChange).toHaveBeenLastCalledWith(suggestions[0]);
     expect(input).toHaveValue(suggestions[0].label);
     expect(input).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByText(`Selected ${suggestions[0].label}.`)).toBeVisible();
+    expect(screen.queryByText(`Selected ${suggestions[0].label}.`)).not.toBeInTheDocument();
   });
 
   it('selects the first visible result when Enter is pressed without an active result', async () => {

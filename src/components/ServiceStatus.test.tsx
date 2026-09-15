@@ -41,14 +41,14 @@ describe('ServiceStatus', () => {
     renderStatus('operational');
 
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /refresh|retry/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/last successful refresh/i)).not.toBeInTheDocument();
   });
 
   it.each([
-    ['no-bikes', 'No rentable bikes are currently reported.'],
-    ['no-docks', 'No return docks are currently reported.'],
-    ['service-disabled', 'Station feeds currently report rental and return service disabled.'],
-    ['stale', 'Station data may be out of date.'],
-    ['unavailable', 'Live station data is unavailable.'],
+    ['no-bikes', 'No bikes available right now.'],
+    ['no-docks', 'No docks available right now.'],
+    ['service-disabled', 'Bike service is unavailable right now.'],
   ] satisfies readonly (readonly [SystemAvailability, string])[])(
     'renders a visible status summary for %s availability',
     (availability, message) => {
@@ -64,16 +64,29 @@ describe('ServiceStatus', () => {
     expect(screen.queryByText(/season|closed/i)).not.toBeInTheDocument();
   });
 
-  it('labels retained data after a failed refresh', () => {
+  it('keeps cached stale data and failed background updates silent', () => {
     renderStatus('stale', {
       snapshot: { ...snapshot, isStale: true },
       error: 'Unable to refresh station data.',
     });
 
-    expect(
-      screen.getByText('Refresh failed. Showing the last successful station snapshot.'),
-    ).toBeVisible();
-    expect(screen.getByText(/Last successful refresh:/)).toBeVisible();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/out of date/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show station map' })).toBeEnabled();
+  });
+
+  it('offers one retry when the initial station load fails', async () => {
+    const { onRefresh, user } = renderStatus('unavailable', {
+      snapshot: null,
+      error: 'Unable to load station data.',
+      mapAvailable: false,
+    });
+
+    expect(screen.getByRole('status')).toHaveTextContent('Couldn’t load stations.');
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await user.click(retry);
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 
   it('shows concise map-toggle text while retaining descriptive accessible labels', async () => {
@@ -106,15 +119,10 @@ describe('ServiceStatus', () => {
     expect(screen.getByRole('button', { name: 'Hide station map' })).toHaveTextContent(/^Hide$/);
   });
 
-  it('invokes refresh and announces refresh progress', async () => {
-    const { onRefresh, user } = renderStatus('operational');
+  it('does not announce routine background refreshing', () => {
+    renderStatus('unavailable', { snapshot: null, refreshing: true });
 
-    await user.click(screen.getByRole('button', { name: 'Refresh station data' }));
-
-    expect(onRefresh).toHaveBeenCalledOnce();
-
-    renderStatus('operational', { refreshing: true });
-    const statuses = screen.getAllByRole('status');
-    expect(statuses[statuses.length - 1]).toHaveTextContent('Refreshing station data');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByText(/refreshing/i)).not.toBeInTheDocument();
   });
 });

@@ -1,15 +1,21 @@
 import LocationSearch from '../../components/LocationSearch';
 import StationChoice from '../../components/StationChoice';
 import TripResults from '../../components/TripResults';
-import { buildGMapsWalking } from '../../lib/maps';
+import type { TripPlan } from '../../lib/tripPlanner';
+import type { LatLon, Station } from '../../types';
 import type { useTripPlanner } from './useTripPlanner';
 
 export interface TripPlannerProps {
   controller: ReturnType<typeof useTripPlanner>;
-  stationDataAvailable: boolean;
+  onStartNavigation?: (plan: TripPlan) => void;
+  onStartPickupNavigation?: (origin: LatLon, pickup: Station) => void;
 }
 
-export default function TripPlanner({ controller, stationDataAvailable }: TripPlannerProps) {
+export default function TripPlanner({
+  controller,
+  onStartNavigation,
+  onStartPickupNavigation,
+}: TripPlannerProps) {
   const {
     originMode,
     setOriginMode,
@@ -29,28 +35,15 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
     dropoffIssue,
     plan,
   } = controller;
-  const pickupWalkUrl =
-    origin !== null && selectedPickup !== null
-      ? buildGMapsWalking(origin, {
-          lat: selectedPickup.station.lat,
-          lon: selectedPickup.station.lon,
-        })
-      : null;
-
   return (
     <section className="trip-planner" aria-labelledby="trip-planner-title">
       <div className="section-heading">
-        <p className="eyebrow">Plan a station-to-station trip</p>
         <h2 id="trip-planner-title">Where are you going?</h2>
-        <p>
-          Choose a starting location to find a nearby bike. Add a destination for the full three-leg
-          trip.
-        </p>
       </div>
 
       <div className="trip-planner__locations">
         <fieldset className="origin-mode">
-          <legend>Starting location method</legend>
+          <legend className="visually-hidden">Starting location method</legend>
           <label>
             <input
               type="radio"
@@ -59,7 +52,7 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
               checked={originMode === 'manual'}
               onChange={() => setOriginMode('manual')}
             />
-            Enter a starting location
+            Enter address
           </label>
           <label>
             <input
@@ -69,7 +62,7 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
               checked={originMode === 'device'}
               onChange={() => setOriginMode('device')}
             />
-            Use my device location
+            My location
           </label>
         </fieldset>
 
@@ -91,25 +84,18 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
         {originMode === 'device' ? (
           <div className="device-location" aria-live="polite" aria-atomic="true">
             {deviceLocation.loading ? (
-              <p className="field-status" role="status">
-                Requesting your current location…
-              </p>
-            ) : null}
-            {deviceLocation.location ? (
-              <p className="field-success" role="status">
-                Device location received: {deviceLocation.location.lat.toFixed(5)},{' '}
-                {deviceLocation.location.lon.toFixed(5)}.
+              <p className="visually-hidden" role="status">
+                Finding your location.
               </p>
             ) : null}
             {deviceLocation.error ? (
               <div className="device-location__error">
                 <p className="field-error" role="alert">
-                  {deviceLocation.error.message}
+                  Couldn’t find your location. Enter an address or try again.
                 </p>
               </div>
             ) : null}
-            {!deviceLocation.loading &&
-            (deviceLocation.location !== null || deviceLocation.error !== null) ? (
+            {!deviceLocation.loading && deviceLocation.error !== null ? (
               <button
                 className="button button--secondary"
                 type="button"
@@ -130,13 +116,6 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
         />
       </div>
 
-      {!stationDataAvailable ? (
-        <p className="planner-message" role="status">
-          Live station data is required before station choices can be calculated. You can still
-          enter locations while the feed reconnects.
-        </p>
-      ) : null}
-
       {pickupIssue ? (
         <p className="planner-message" role="status">
           {pickupIssue}
@@ -150,21 +129,20 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
           onSelect={selectPickup}
         />
       ) : null}
-      {pickupWalkUrl !== null && selectedPickup !== null && plan === null ? (
+      {origin !== null && selectedPickup !== null && plan === null && onStartPickupNavigation ? (
         <section
           className="pickup-shortcut"
-          aria-label="Walk to your pickup"
+          aria-label="Navigate to your pickup"
           aria-live="polite"
           aria-atomic="true"
         >
-          <a
+          <button
             className="button button--primary"
-            href={pickupWalkUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+            type="button"
+            onClick={() => onStartPickupNavigation(origin, selectedPickup.station)}
           >
-            Walk to {selectedPickup.station.name}
-          </a>
+            Navigate to pickup
+          </button>
         </section>
       ) : null}
 
@@ -182,7 +160,7 @@ export default function TripPlanner({ controller, stationDataAvailable }: TripPl
         />
       ) : null}
 
-      {plan ? <TripResults plan={plan} /> : null}
+      {plan ? <TripResults plan={plan} onStartNavigation={onStartNavigation} /> : null}
     </section>
   );
 }

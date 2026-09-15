@@ -37,8 +37,8 @@ describe('StationChoice', () => {
     );
 
     expect(screen.getByRole('group', { name: 'Pickup station' })).toBeVisible();
-    expect(screen.getByText('Recommended — closest')).toBeVisible();
-    expect(screen.getByText('Alternative — next closest')).toBeVisible();
+    expect(screen.getByText('Closest')).toBeVisible();
+    expect(screen.getByText('Nearby')).toBeVisible();
     const recommendation = screen.getByRole('radio', { name: /Capitol Square/i }).closest('label');
     expect(recommendation).toHaveTextContent('0.21 mi · 5 bikes available');
     expect(recommendation).not.toHaveTextContent('straight-line estimate');
@@ -66,8 +66,8 @@ describe('StationChoice', () => {
   });
 
   it.each([
-    ['pickup', 5, 3, 7, 3, 'Alternative — more bikes'],
-    ['dropoff', 3, 5, 3, 7, 'Alternative — more docks'],
+    ['pickup', 5, 3, 7, 3, 'More bikes'],
+    ['dropoff', 3, 5, 3, 7, 'More docks'],
   ] as const)(
     'explains a higher-availability %s alternative',
     (kind, recommendedBikes, recommendedDocks, alternativeBikes, alternativeDocks, label) => {
@@ -91,7 +91,7 @@ describe('StationChoice', () => {
         />,
       );
 
-      expect(screen.getByText('Recommended — closest')).toBeVisible();
+      expect(screen.getByText('Closest')).toBeVisible();
       expect(screen.getByText(label)).toBeVisible();
     },
   );
@@ -113,8 +113,8 @@ describe('StationChoice', () => {
       />,
     );
 
-    expect(screen.getByText('Recommended — closest')).toBeVisible();
-    expect(screen.getByText('Alternative — next closest')).toBeVisible();
+    expect(screen.getByText('Closest')).toBeVisible();
+    expect(screen.getByText('Nearby')).toBeVisible();
   });
 
   it('selects an alternative station', async () => {
@@ -142,20 +142,27 @@ describe('StationChoice', () => {
   });
 
   it.each([
-    ['pickup', 1, 4, 'Only 1 bike available.'],
-    ['dropoff', 4, 1, 'Only 1 dock available.'],
-  ] as const)('visually warns about low %s availability', (kind, bikes, docks, warning) => {
-    render(
-      <StationChoice
-        kind={kind}
-        candidates={[
-          { station: station('recommended', bikes, docks), distanceMi: 0.1, reason: 'closest' },
-        ]}
-        selectedId="recommended"
-        onSelect={vi.fn()}
-      />,
-    );
+    ['pickup', 1, 4, '0.10 mi · 1 bike left'],
+    ['dropoff', 4, 1, '0.10 mi · 1 dock left'],
+  ] as const)(
+    'shows low %s availability once in the warning metadata',
+    (kind, bikes, docks, warning) => {
+      render(
+        <StationChoice
+          kind={kind}
+          candidates={[
+            { station: station('recommended', bikes, docks), distanceMi: 0.1, reason: 'closest' },
+          ]}
+          selectedId="recommended"
+          onSelect={vi.fn()}
+        />,
+      );
 
-    expect(screen.getByText(warning)).toHaveClass('station-choice__warning');
-  });
+      expect(screen.getByText(warning)).toHaveClass(
+        'station-choice__meta',
+        'station-choice__warning',
+      );
+      expect(screen.queryByText(/Only 1 (bike|dock) available\./)).not.toBeInTheDocument();
+    },
+  );
 });

@@ -43,7 +43,7 @@ export default function StationMap(props: StationMapProps) {
           </span>
         ))}
       </div>
-      <p className="station-map__hint">
+      <p className="visually-hidden">
         {showingTripChoices
           ? 'Showing your pickup and drop-off choices. Tap a candidate marker to view details and choose pickup or drop-off. Selected stations have a bold outline. '
           : 'Selected pickup and drop-off stations have a bold outline. '}

@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ComponentProps } from 'react';
 import { vi } from 'vitest';
 import type { Station } from '../../types';
 import TripPlanner from './TripPlanner';
@@ -45,30 +46,41 @@ const stationsWithAlternativePickup: Station[] = [
   },
 ];
 
-function Harness() {
+function Harness({
+  onStartNavigation,
+  onStartPickupNavigation,
+}: Pick<ComponentProps<typeof TripPlanner>, 'onStartNavigation' | 'onStartPickupNavigation'> = {}) {
   const controller = useTripPlanner(stations);
-  return <TripPlanner controller={controller} stationDataAvailable />;
+  return (
+    <TripPlanner
+      controller={controller}
+      onStartNavigation={onStartNavigation}
+      onStartPickupNavigation={onStartPickupNavigation}
+    />
+  );
 }
 
 function EmptyHarness() {
   const controller = useTripPlanner([]);
-  return <TripPlanner controller={controller} stationDataAvailable={false} />;
+  return <TripPlanner controller={controller} />;
 }
 
-function AlternativePickupHarness() {
+function AlternativePickupHarness({
+  onStartPickupNavigation,
+}: Pick<ComponentProps<typeof TripPlanner>, 'onStartPickupNavigation'> = {}) {
   const controller = useTripPlanner(stationsWithAlternativePickup);
-  return <TripPlanner controller={controller} stationDataAvailable />;
+  return <TripPlanner controller={controller} onStartPickupNavigation={onStartPickupNavigation} />;
 }
 
 function RefreshingHarness({ currentStations }: { currentStations: Station[] }) {
   const controller = useTripPlanner(currentStations);
-  return <TripPlanner controller={controller} stationDataAvailable />;
+  return <TripPlanner controller={controller} />;
 }
 
 describe('TripPlanner', () => {
-  it('resolves coordinate searches and renders candidate choices and three route legs', async () => {
+  it('resolves coordinate searches and offers full-trip navigation', async () => {
     const user = userEvent.setup();
-    render(<Harness />);
+    render(<Harness onStartNavigation={vi.fn()} />);
 
     await user.type(
       screen.getByRole('combobox', { name: 'Starting location' }),
@@ -81,9 +93,9 @@ describe('TripPlanner', () => {
 
     expect(await screen.findByRole('group', { name: 'Pickup station' })).toBeVisible();
     expect(screen.getByRole('group', { name: 'Drop-off station' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Your three-leg itinerary' })).toBeVisible();
-    expect(screen.getAllByRole('link', { name: /in Google Maps/ })).toHaveLength(3);
-    expect(screen.queryByRole('link', { name: 'Walk to Capitol Square' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Go to navigation' })).toBeVisible();
+    expect(document.querySelector('a[href*="google.com/maps"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Navigate to pickup' })).not.toBeInTheDocument();
   });
 
   it('automatically resolves a manual origin on field exit without a search button', async () => {
@@ -100,30 +112,33 @@ describe('TripPlanner', () => {
     expect(await screen.findByRole('group', { name: 'Pickup station' })).toBeVisible();
   });
 
-  it('offers walking directions to the selected pickup before a destination is resolved', async () => {
+  it('starts in-app navigation to the selected pickup without requiring a destination', async () => {
     const user = userEvent.setup();
-    render(<Harness />);
+    const onStartPickupNavigation = vi.fn();
+    render(<Harness onStartPickupNavigation={onStartPickupNavigation} />);
 
     await user.type(
       screen.getByRole('combobox', { name: 'Starting location' }),
       '43.07310, -89.40120{Enter}',
     );
 
-    const walkLink = await screen.findByRole('link', { name: 'Walk to Capitol Square' });
-    expect(screen.getByRole('region', { name: 'Walk to your pickup' })).toContainElement(walkLink);
-    const directions = new URL(walkLink.getAttribute('href') ?? '');
-    expect(directions.origin + directions.pathname).toBe('https://www.google.com/maps/dir/');
-    expect(directions.searchParams.get('origin')).toBe('43.0731,-89.4012');
-    expect(directions.searchParams.get('destination')).toBe('43.0735,-89.401');
-    expect(directions.searchParams.get('travelmode')).toBe('walking');
-    expect(
-      screen.queryByRole('heading', { name: 'Your three-leg itinerary' }),
-    ).not.toBeInTheDocument();
+    const navigate = await screen.findByRole('button', { name: 'Navigate to pickup' });
+    expect(screen.getByRole('region', { name: 'Navigate to your pickup' })).toContainElement(
+      navigate,
+    );
+    await user.click(navigate);
+    expect(onStartPickupNavigation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ lat: 43.0731, lon: -89.4012 }),
+      stations[0],
+    );
+    expect(document.querySelector('a[href*="google.com/maps"]')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Go to navigation' })).not.toBeInTheDocument();
   });
 
-  it('updates the walking shortcut when another pickup station is selected', async () => {
+  it('uses the current pickup selection for pickup-only navigation', async () => {
     const user = userEvent.setup();
-    render(<AlternativePickupHarness />);
+    const onStartPickupNavigation = vi.fn();
+    render(<AlternativePickupHarness onStartPickupNavigation={onStartPickupNavigation} />);
 
     await user.type(
       screen.getByRole('combobox', { name: 'Starting location' }),
@@ -131,10 +146,11 @@ describe('TripPlanner', () => {
     );
     await user.click(await screen.findByRole('radio', { name: /West Washington & Bedford/ }));
 
-    const walkLink = screen.getByRole('link', { name: 'Walk to West Washington & Bedford' });
-    const directions = new URL(walkLink.getAttribute('href') ?? '');
-    expect(directions.searchParams.get('destination')).toBe('43.074,-89.3997');
-    expect(directions.searchParams.get('travelmode')).toBe('walking');
+    await user.click(screen.getByRole('button', { name: 'Navigate to pickup' }));
+    expect(onStartPickupNavigation).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ lat: 43.0731, lon: -89.4012 }),
+      stationsWithAlternativePickup[2],
+    );
   });
 
   it('keeps manual entry available after a device-location error and provides retry', async () => {
@@ -146,11 +162,13 @@ describe('TripPlanner', () => {
     });
 
     render(<Harness />);
-    await user.click(screen.getByRole('radio', { name: 'Use my device location' }));
+    await user.click(screen.getByRole('radio', { name: 'My location' }));
 
-    expect(await screen.findByText('Location is not supported by this browser.')).toBeVisible();
+    expect(
+      await screen.findByText('Couldn’t find your location. Enter an address or try again.'),
+    ).toBeVisible();
     expect(screen.getByRole('button', { name: 'Retry device location' })).toBeVisible();
-    await user.click(screen.getByRole('radio', { name: 'Enter a starting location' }));
+    await user.click(screen.getByRole('radio', { name: 'Enter address' }));
     expect(screen.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
 
     Object.defineProperty(navigator, 'geolocation', {
@@ -188,11 +206,9 @@ describe('TripPlanner', () => {
     });
 
     render(<Harness />);
-    await user.click(screen.getByRole('radio', { name: 'Use my device location' }));
+    await user.click(screen.getByRole('radio', { name: 'My location' }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('radio', { name: 'Enter a starting location' })).toBeChecked(),
-    );
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Enter address' })).toBeChecked());
     expect(screen.getByRole('combobox', { name: 'Starting location' })).toBeVisible();
     expect(
       screen.getByText(
@@ -235,11 +251,9 @@ describe('TripPlanner', () => {
     });
 
     render(<EmptyHarness />);
-    await user.click(screen.getByRole('radio', { name: 'Use my device location' }));
+    await user.click(screen.getByRole('radio', { name: 'My location' }));
 
-    await waitFor(() =>
-      expect(screen.getByRole('radio', { name: 'Enter a starting location' })).toBeChecked(),
-    );
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Enter address' })).toBeChecked());
     expect(
       screen.getByText(
         'Live station data is not available to validate your device location. Enter a starting location instead.',
@@ -279,10 +293,8 @@ describe('TripPlanner', () => {
     });
     const { rerender } = render(<RefreshingHarness currentStations={stations} />);
 
-    await user.click(screen.getByRole('radio', { name: 'Use my device location' }));
-    await waitFor(() =>
-      expect(screen.getByRole('radio', { name: 'Use my device location' })).toBeChecked(),
-    );
+    await user.click(screen.getByRole('radio', { name: 'My location' }));
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'My location' })).toBeChecked());
 
     const distantStations = stations.map((currentStation, index) => ({
       ...currentStation,
@@ -291,9 +303,7 @@ describe('TripPlanner', () => {
     }));
     rerender(<RefreshingHarness currentStations={distantStations} />);
 
-    await waitFor(() =>
-      expect(screen.getByRole('radio', { name: 'Enter a starting location' })).toBeChecked(),
-    );
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Enter address' })).toBeChecked());
     expect(
       screen.getByText(
         'Your device location is outside the current BCycle service area. Enter a starting location instead.',

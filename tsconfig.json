@@ -6,6 +6,7 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "moduleDetection": "force",
@@ -17,5 +18,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["vite/client", "vitest/globals", "node"]
   },
-  "include": ["src", "e2e", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+  "include": ["src", "e2e", "netlify", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
 }

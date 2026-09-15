@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 const DISCOVERY_URL = 'https://gbfs.bcycle.com/bcycle_madison/gbfs.json';
 const INFORMATION_URL = 'https://gbfs.bcycle.com/bcycle_madison/station_information.json';
@@ -217,7 +217,7 @@ export async function mockAppNetwork(
 
 export async function loadReadyApp(page: Page): Promise<void> {
   await page.goto('/');
-  await page.getByText(/Last successful refresh:/).waitFor();
+  await expect(page.getByRole('button', { name: 'Show station map' })).toBeEnabled();
 }
 
 export async function resolveCoordinates(

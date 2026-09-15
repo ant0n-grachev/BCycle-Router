@@ -12,6 +12,7 @@
 # production
 /build
 /dist
+/.netlify
 
 # browser tests
 /playwright-report

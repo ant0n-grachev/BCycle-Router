@@ -37,9 +37,76 @@ function snapshot(overrides: Partial<StationSnapshot> = {}): StationSnapshot {
 }
 
 describe('useServiceAreaData', () => {
+  afterEach(() => vi.useRealTimers());
   beforeEach(() => {
     mockedLoadStationSnapshot.mockReset();
     mockedGetSystemAvailability.mockClear();
+  });
+
+  it('bypasses the snapshot cache on a visible interval after a delayed initial fetch', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    const first = snapshot();
+    const changed = snapshot({ stations: [{ ...first.stations[0], num_bikes_available: 0 }] });
+    let resolveInitial!: (value: StationSnapshot) => void;
+    const initialRequest = new Promise<StationSnapshot>((resolve) => {
+      resolveInitial = resolve;
+    });
+    let calls = 0;
+    mockedLoadStationSnapshot.mockImplementation((options = {}) => {
+      calls += 1;
+      if (calls === 1) return initialRequest;
+      return Promise.resolve(options.forceRefresh ? changed : first);
+    });
+
+    const { result } = renderHook(() => useServiceAreaData(15_000));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+      resolveInitial(first);
+      await initialRequest;
+    });
+    expect(result.current.data?.stations[0].num_bikes_available).toBe(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(result.current.data?.stations[0].num_bikes_available).toBe(0);
+    expect(mockedLoadStationSnapshot).toHaveBeenNthCalledWith(2, { forceRefresh: true });
+  });
+
+  it('updates availability at the navigation interval and refreshes after returning to the app', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+    const first = snapshot();
+    const changed = snapshot({ stations: [{ ...first.stations[0], num_bikes_available: 0 }] });
+    mockedLoadStationSnapshot.mockResolvedValueOnce(first).mockResolvedValue(changed);
+    const { result, unmount } = renderHook(() => useServiceAreaData(15_000));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.data?.stations[0].num_bikes_available).toBe(3);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(result.current.data?.stations[0].num_bikes_available).toBe(0);
+    mockedLoadStationSnapshot.mockResolvedValue(first);
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(result.current.data?.stations[0].num_bikes_available).toBe(0);
+    await act(async () => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      await Promise.resolve();
+    });
+    expect(result.current.data?.stations[0].num_bikes_available).toBe(3);
+    unmount();
+    vi.useRealTimers();
   });
 
   it('keeps the last valid snapshot and availability visible when a forced refresh fails', async () => {
